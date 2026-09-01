@@ -1309,7 +1309,9 @@ function ListenerForm({
         <div className="ting-form-body">
           {cardsOnly && (
             <div className="cards-only-success">
-              ✓ Tinglovchi ro‘yxatga kiritildi. Guruh kartochkasi ochildi.
+              {submitted
+                ? '✓ Tinglovchi ro‘yxatga kiritildi. Guruh kartochkasi ochildi.'
+                : '👥 Guruh kartochkasi ochildi.'}
             </div>
           )}
           {groupPreviewOpen && (
