@@ -1117,6 +1117,11 @@ function ListenerForm({
       return;
     }
     setError('');
+    // “Ko‘rish” is a dedicated group-card view.  Keeping the registration
+    // fields on screen made the result look like an unfinished form,
+    // especially on a phone.
+    setCardsOnly(true);
+    setSubmitted(false);
     setGroupPreviewOpen(true);
   }
 
@@ -1316,7 +1321,18 @@ function ListenerForm({
                     👥 {detectedGroup} · {detectedGroupRows.length} nafar
                   </h4>
                 </div>
-                {!cardsOnly && (
+                {cardsOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCardsOnly(false);
+                      setSubmitted(false);
+                      setGroupPreviewOpen(false);
+                    }}
+                  >
+                    ← Formaga qaytish
+                  </button>
+                ) : (
                   <button
                     type="button"
                     onClick={() => setGroupPreviewOpen(false)}
