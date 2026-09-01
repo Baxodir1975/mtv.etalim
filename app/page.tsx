@@ -35,6 +35,69 @@ type ListenerRecord = {
 
 type ListenerDraft = Omit<ListenerRecord, 'id' | 'status'>;
 
+type AccessRole = 'Bosh admin' | 'Admin' | 'Foydalanuvchi' | 'Ko‘ruvchi';
+
+type RoleMember = {
+  id: string;
+  initials: string;
+  name: string;
+  email: string;
+  role: AccessRole;
+  active: boolean;
+  locked?: boolean;
+  permissions: string[];
+};
+
+const STORAGE_KEYS = {
+  listeners: 'mtv-etalimai.listeners.v3',
+  telegram: 'mtv-etalimai.telegram.v1',
+  deviceGroup: 'mtv-etalimai.device-group.v1',
+  deviceListener: 'mtv-etalimai.device-listener.v1',
+  roles: 'mtv-etalimai.roles.v2',
+};
+
+const adminEmail = 'ilxomovb2023@gmail.com';
+const accessActions = ['Ko‘rish', 'Kiritish', 'Tahrirlash', 'O‘chirish'];
+const accessPages = [
+  'Tinglovchilar',
+  'Tinglovchi formasi',
+  'Shartlar',
+  'Manbalar',
+  'Rollar va ruxsatlar',
+];
+
+const defaultRoleMembers: RoleMember[] = [
+  {
+    id: 'super-admin-ilxomovb2023',
+    initials: 'ИБ',
+    name: 'Islom',
+    email: adminEmail,
+    role: 'Bosh admin',
+    active: true,
+    locked: true,
+    permissions: accessPages.flatMap((page) =>
+      accessActions.map((action) => `${page}:${action}`),
+    ),
+  },
+];
+
+function readStored<T>(key: string, fallback: T): T {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value ? (JSON.parse(value) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveStored(key: string, value: unknown) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Browser storage may be unavailable or full; the current page remains usable.
+  }
+}
+
 const navigation: Array<{ id: SectionId; label: string }> = [
   { id: 'listeners', label: 'Тингловчилар' },
   { id: 'form', label: 'Тингловчи формаси' },
@@ -329,6 +392,12 @@ export default function Home() {
   const [telegramGroupUrl, setTelegramGroupUrl] = useState(
     'https://t.me/+KjvJ7LUjdmY3MDhi',
   );
+  const [deviceGroup, setDeviceGroup] = useState('');
+  const [deviceListenerId, setDeviceListenerId] = useState('');
+  const [roleMembers, setRoleMembers] = useState<RoleMember[]>(
+    defaultRoleMembers,
+  );
+  const [storageReady, setStorageReady] = useState(false);
 
   useEffect(() => {
     const requestedSection = new URLSearchParams(window.location.search).get(
@@ -340,6 +409,65 @@ export default function Home() {
     )
       setActiveSection(requestedSection);
   }, []);
+
+  useEffect(() => {
+    setListeners(readStored<ListenerRecord[]>(STORAGE_KEYS.listeners, []));
+    setTelegramGroupUrl(
+      readStored<string>(
+        STORAGE_KEYS.telegram,
+        'https://t.me/+KjvJ7LUjdmY3MDhi',
+      ),
+    );
+    setDeviceGroup(readStored<string>(STORAGE_KEYS.deviceGroup, ''));
+    setDeviceListenerId(readStored<string>(STORAGE_KEYS.deviceListener, ''));
+    const storedRoles = readStored<RoleMember[]>(
+      STORAGE_KEYS.roles,
+      defaultRoleMembers,
+    );
+    const protectedAdmin = storedRoles.find(
+      (member) => member.email.toLowerCase() === adminEmail,
+    );
+    setRoleMembers(
+      protectedAdmin
+        ? storedRoles.map((member) =>
+            member.email.toLowerCase() === adminEmail
+              ? {
+                  ...member,
+                  role: 'Bosh admin',
+                  active: true,
+                  locked: true,
+                  permissions: defaultRoleMembers[0].permissions,
+                }
+              : member,
+          )
+        : defaultRoleMembers,
+    );
+    setStorageReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    saveStored(STORAGE_KEYS.listeners, listeners);
+  }, [listeners, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    saveStored(STORAGE_KEYS.telegram, telegramGroupUrl);
+  }, [telegramGroupUrl, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    saveStored(STORAGE_KEYS.roles, roleMembers);
+  }, [roleMembers, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    // Keep the scalar values in the same JSON format as every other stored value.
+    // `readStored` uses JSON.parse, so raw localStorage strings would be lost after
+    // a page refresh and could accidentally unlock the enrolment group.
+    saveStored(STORAGE_KEYS.deviceGroup, deviceGroup);
+    saveStored(STORAGE_KEYS.deviceListener, deviceListenerId);
+  }, [deviceGroup, deviceListenerId, storageReady]);
 
   function openSection(section: SectionId) {
     setActiveSection(section);
@@ -465,7 +593,7 @@ export default function Home() {
           <div className="avatar">ИБ</div>
           <div>
             <strong>Islom</strong>
-            <span>moliya@appsheet.uz</span>
+            <span>{adminEmail}</span>
             <small>Bosh admin</small>
           </div>
           <button aria-label="Akkaunt">•••</button>
@@ -506,6 +634,7 @@ export default function Home() {
             <ListenerForm
               rows={listeners}
               telegramGroupUrl={telegramGroupUrl}
+              lockedGroup={deviceGroup}
               onCancel={() => openSection('listeners')}
               onSave={(listener, editingId) => {
                 const id =
@@ -522,6 +651,10 @@ export default function Home() {
                       )
                     : [...current, record],
                 );
+                if (!editingId && listener.group) {
+                  setDeviceGroup(listener.group);
+                  setDeviceListenerId(id);
+                }
                 return id;
               }}
             />
@@ -530,7 +663,9 @@ export default function Home() {
             <TermsPanel onOpenForm={() => openSection('form')} />
           )}
           {activeSection === 'sources' && <SourcesPanel />}
-          {activeSection === 'roles' && <RolesPanel />}
+          {activeSection === 'roles' && (
+            <RolesPanel members={roleMembers} onMembersChange={setRoleMembers} />
+          )}
         </div>
       </section>
     </main>
@@ -926,11 +1061,13 @@ function fileDataUrl(file: File) {
 function ListenerForm({
   rows,
   telegramGroupUrl,
+  lockedGroup,
   onSave,
   onCancel,
 }: {
   rows: ListenerRecord[];
   telegramGroupUrl: string;
+  lockedGroup: string;
   onSave: (listener: ListenerDraft, editingId?: string) => string;
   onCancel: () => void;
 }) {
@@ -962,6 +1099,15 @@ function ListenerForm({
     () => rows.filter((row) => row.group === detectedGroup),
     [rows, detectedGroup],
   );
+  const groupIsLocked = Boolean(
+    editingRecord || (lockedGroup && !editingRecord),
+  );
+
+  useEffect(() => {
+    if (!editingRecord && lockedGroup) {
+      setSelectedGroup(lockedGroup);
+    }
+  }, [editingRecord, lockedGroup]);
 
   function openGroupPreview() {
     if (!detectedGroup) {
@@ -1331,14 +1477,14 @@ function ListenerForm({
                   </label>
                   <label>
                     <span>Guruh *</span>
-                    {editingRecord && (
+                    {groupIsLocked && (
                       <input type="hidden" name="group" value={selectedGroup} />
                     )}
                     <select
-                      name={editingRecord ? undefined : 'group'}
+                      name={groupIsLocked ? undefined : 'group'}
                       required
                       value={selectedGroup}
-                      disabled={Boolean(editingRecord)}
+                      disabled={groupIsLocked}
                       onChange={(event) => {
                         setSelectedGroup(event.target.value);
                         setGroupPreviewOpen(false);
@@ -1349,6 +1495,11 @@ function ListenerForm({
                         <option key={item}>{item}</option>
                       ))}
                     </select>
+                    {lockedGroup && !editingRecord && (
+                      <small className="phone-group-found">
+                        🔒 Bu qurilma uchun guruh birinchi ro‘yxatdan o‘tishdan keyin biriktirilgan.
+                      </small>
+                    )}
                   </label>
                 </div>
               </section>
@@ -1904,93 +2055,142 @@ function SourcesPanel() {
   );
 }
 
-function RolesPanel() {
-  const [selectedRole, setSelectedRole] = useState('Bosh admin');
+function permissionsForRole(role: AccessRole) {
+  if (role === 'Bosh admin' || role === 'Admin') {
+    return accessPages.flatMap((page) =>
+      accessActions.map((action) => `${page}:${action}`),
+    );
+  }
+  if (role === 'Foydalanuvchi') {
+    return [
+      'Tinglovchilar:Ko‘rish',
+      'Tinglovchi formasi:Ko‘rish',
+      'Tinglovchi formasi:Kiritish',
+      'Shartlar:Ko‘rish',
+      'Manbalar:Ko‘rish',
+    ];
+  }
+  return [
+    'Tinglovchilar:Ko‘rish',
+    'Shartlar:Ko‘rish',
+    'Manbalar:Ko‘rish',
+  ];
+}
+
+function initialsFor(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase() || 'FA';
+}
+
+function RolesPanel({
+  members,
+  onMembersChange,
+}: {
+  members: RoleMember[];
+  onMembersChange: (members: RoleMember[]) => void;
+}) {
   const [activeTab, setActiveTab] = useState<
     'roles' | 'permissions' | 'monitoring'
   >('roles');
-  const roles = [
-    {
-      name: 'Bosh admin',
-      note: 'Барча саҳифа ва ҳаракатларга тўлиқ рухсат.',
-      pages: [
-        'Тингловчилар',
-        'Eta’lim манба',
-        'Ҳудуд ва туман',
-        'Категория ва гуруҳ',
-        'Вазирлик ва идоралар',
-      ],
-      actions: ['Кўриш', 'Киритиш', 'Таҳрирлаш', 'Ўчириш'],
-    },
-    {
-      name: 'Admin',
-      note: 'Манбадаги preset бўйича тўлиқ бошқарув рухсати.',
-      pages: [
-        'Тингловчилар',
-        'Eta’lim манба',
-        'Ҳудуд ва туман',
-        'Категория ва гуруҳ',
-        'Вазирлик ва идоралар',
-      ],
-      actions: ['Кўриш', 'Киритиш', 'Таҳрирлаш', 'Ўчириш'],
-    },
-    {
-      name: 'Foydalanuvchi',
-      note: 'Тингловчилар ва белгиланган иш саҳифаларига кириш.',
-      pages: [
-        'Бош саҳифа',
-        'Солнома',
-        'Дарс соатлари',
-        'Назорат соатлари',
-        'Режа-амалда',
-        'FISH ҳисоботи',
-        'Модул ва мавзулар',
-        'Тингловчилар',
-        'Туғилган кунлар',
-      ],
-      actions: ['Кўриш', 'Киритиш', 'Таҳрирлаш', 'Ўчириш'],
-    },
-    {
-      name: 'Ko‘ruvchi',
-      note: 'Фақат кўриш ҳуқуқи берилган чекланган роль.',
-      pages: [
-        'Бош саҳифа',
-        'Режа-амалда',
-        'FISH ҳисоботи',
-        'Тингловчилар',
-        'Туғилган кунлар',
-      ],
-      actions: ['Кўриш'],
-    },
-  ];
-  const selected = roles.find((role) => role.name === selectedRole) ?? roles[0];
-  const permissionRows = [
-    ['TINGLOVCHILAR', 'Тингловчилар'],
-    ['MANBALAR', 'Eta’lim манба'],
-    ['MANBALAR', 'Ҳудуд ва туман'],
-    ['MANBALAR', 'Категория ва гуруҳ'],
-    ['MANBALAR', 'Вазирлик ва идоралар'],
-  ];
+  const [entryOpen, setEntryOpen] = useState(false);
+  const [selectedMemberId, setSelectedMemberId] = useState(
+    members[0]?.id || '',
+  );
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<AccessRole>('Foydalanuvchi');
+  const [formError, setFormError] = useState('');
+  const selectedMember =
+    members.find((member) => member.id === selectedMemberId) ?? members[0];
+  const roleNotes: Record<AccessRole, string> = {
+    'Bosh admin': 'Barcha bo‘lim va amallar doim ochiq. Himoyalangan rol.',
+    Admin: 'Tinglovchilar, manbalar va rollarni boshqaradi.',
+    Foydalanuvchi: 'Ro‘yxatdan o‘tish va belgilangan sahifalar bilan ishlaydi.',
+    'Ko‘ruvchi': 'Faqat ko‘rish rejimida ishlaydi.',
+  };
+
+  function updateMember(id: string, patch: Partial<RoleMember>) {
+    onMembersChange(
+      members.map((member) =>
+        member.id === id ? { ...member, ...patch } : member,
+      ),
+    );
+  }
+
+  function updateRole(member: RoleMember, nextRole: AccessRole) {
+    if (member.locked) return;
+    updateMember(member.id, {
+      role: nextRole,
+      permissions: permissionsForRole(nextRole),
+    });
+  }
+
+  function togglePermission(member: RoleMember, permission: string) {
+    if (member.locked) return;
+    const permissions = member.permissions.includes(permission)
+      ? member.permissions.filter((item) => item !== permission)
+      : [...member.permissions, permission];
+    updateMember(member.id, { permissions });
+  }
+
+  function addMember(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = name.trim();
+    if (!cleanName || !/^\S+@\S+\.\S+$/.test(cleanEmail)) {
+      setFormError('Ism va to‘liq e-mail manzilini kiriting.');
+      return;
+    }
+    if (members.some((member) => member.email.toLowerCase() === cleanEmail)) {
+      setFormError('Bu e-mail allaqachon ruxsatlar ro‘yxatida bor.');
+      return;
+    }
+    const member: RoleMember = {
+      id: window.crypto?.randomUUID?.() ?? String(Date.now()),
+      initials: initialsFor(cleanName),
+      name: cleanName,
+      email: cleanEmail,
+      role,
+      active: true,
+      permissions: permissionsForRole(role),
+    };
+    onMembersChange([...members, member]);
+    setSelectedMemberId(member.id);
+    setName('');
+    setEmail('');
+    setRole('Foydalanuvchi');
+    setFormError('');
+    setEntryOpen(false);
+  }
 
   return (
     <section className="access-page access-management-page">
       <div className="access-hero access-management-hero">
         <div className="access-title-block">
+          <p className="eyebrow">E-TA’LIM MANBASI ASOSIDA</p>
           <h2>RUXSAT VA ROLL</h2>
           <div className="access-view-tabs" role="tablist">
             <button
+              type="button"
               className={activeTab === 'roles' ? 'active' : ''}
               onClick={() => setActiveTab('roles')}
             >
               Rollar
             </button>
             <button
+              type="button"
               className={activeTab === 'permissions' ? 'active' : ''}
               onClick={() => setActiveTab('permissions')}
             >
               Ruxsatlar
             </button>
             <button
+              type="button"
               className={activeTab === 'monitoring' ? 'active' : ''}
               onClick={() => setActiveTab('monitoring')}
             >
@@ -2002,91 +2202,234 @@ function RolesPanel() {
           <button
             type="button"
             className="staff-entry-button access-entry-button"
+            onClick={() => setEntryOpen((open) => !open)}
           >
-            <span>＋</span> KIRITISH
+            <span>＋</span> {entryOpen ? 'YOPISH' : 'KIRITISH'}
           </button>
         )}
       </div>
-      {activeTab !== 'monitoring' ? (
+
+      {entryOpen && (
+        <article className="access-panel access-entry-panel">
+          <div className="access-panel-head">
+            <div>
+              <p className="eyebrow">YANGI ISHTIROKCHI</p>
+              <h3>Ruxsat berish</h3>
+              <p>E-mail orqali rolni biriktiring. Bosh admin roli himoyalangan.</p>
+            </div>
+          </div>
+          <form className="access-add-form access-form-grid" onSubmit={addMember}>
+            <label>
+              <span>F.I.Sh. *</span>
+              <input
+                required
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Ism Familiya"
+              />
+            </label>
+            <label>
+              <span>Xizmat e-maili *</span>
+              <input
+                required
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="xodim@example.uz"
+              />
+            </label>
+            <label>
+              <span>Rol</span>
+              <select
+                value={role}
+                onChange={(event) => setRole(event.target.value as AccessRole)}
+              >
+                <option>Admin</option>
+                <option>Foydalanuvchi</option>
+                <option>Ko‘ruvchi</option>
+              </select>
+            </label>
+            <button className="primary" type="submit">
+              RUXSATNI SAQLASH
+            </button>
+          </form>
+          {formError && <p className="access-form-error"><span>!</span>{formError}</p>}
+        </article>
+      )}
+
+      {activeTab === 'roles' && (
         <>
           <div className="access-role-presets">
-            {roles.map((role) => (
+            {(Object.keys(roleNotes) as AccessRole[]).map((item) => (
               <button
                 type="button"
-                key={role.name}
-                className={selectedRole === role.name ? 'active' : ''}
-                onClick={() => setSelectedRole(role.name)}
+                key={item}
+                className={selectedMember?.role === item ? 'active' : ''}
+                onClick={() => {
+                  const target = members.find((member) => member.role === item);
+                  if (target) setSelectedMemberId(target.id);
+                }}
               >
-                <strong>{role.name}</strong>
-                <small>{role.note}</small>
+                <strong>{item}</strong>
+                <small>{roleNotes[item]}</small>
               </button>
             ))}
           </div>
           <article className="access-panel access-matrix-panel">
             <div className="access-panel-head">
               <div>
-                <p className="eyebrow">ROL BO‘YICHA AMALLAR</p>
-                <h3>
-                  {activeTab === 'roles'
-                    ? 'Rol bo‘yicha sahifalar'
-                    : 'Ruxsatlar'}
-                </h3>
-                <p>{selected.name} uchun manbadagi ruxsatlar matritsasi.</p>
+                <p className="eyebrow">ISHTIROKCHILAR RO‘YXATI</p>
+                <h3>E-mail bilan bog‘langan rollar</h3>
+                <p>{members.length} ta ruxsat yozuvi saqlangan.</p>
               </div>
             </div>
             <div className="access-table-wrap">
               <table className="access-simple-grid">
                 <thead>
                   <tr>
-                    <th>BO‘LIM</th>
-                    <th>SAHIFA</th>
-                    {['Ko‘rish', 'Kiritish', 'Tahrirlash', 'O‘chirish'].map(
-                      (action) => (
-                        <th key={action}>{action}</th>
-                      ),
-                    )}
+                    <th>F.I.Sh.</th>
+                    <th>E-MAIL</th>
+                    <th>ROL</th>
+                    <th>HOLAT</th>
+                    <th>AMAL</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {permissionRows.map(([section, page]) => {
-                    const pageEnabled = selected.pages.includes(page);
-                    return (
-                      <tr key={page}>
-                        <td>{section}</td>
-                        <td>{page}</td>
-                        {['Кўриш', 'Киритиш', 'Таҳрирлаш', 'Ўчириш'].map(
-                          (action) => {
-                            const enabled =
-                              pageEnabled && selected.actions.includes(action);
-                            return (
-                              <td key={action}>
-                                <span
-                                  className={`access-simple-check ${enabled ? '' : 'off'}`}
-                                >
-                                  {enabled ? '✓' : '–'}
-                                </span>
-                              </td>
-                            );
-                          },
-                        )}
-                      </tr>
-                    );
-                  })}
+                  {members.map((member) => (
+                    <tr key={member.id}>
+                      <td>
+                        <b>{member.name}</b>
+                        {member.locked && <small className="access-current-badge">HIMOYALANGAN</small>}
+                      </td>
+                      <td><a href={`mailto:${member.email}`}>{member.email}</a></td>
+                      <td>
+                        <select
+                          className={member.role === 'Bosh admin' ? 'role-select super' : 'role-select'}
+                          value={member.role}
+                          disabled={member.locked}
+                          onChange={(event) => updateRole(member, event.target.value as AccessRole)}
+                        >
+                          {(member.locked
+                            ? (['Bosh admin'] as AccessRole[])
+                            : (['Admin', 'Foydalanuvchi', 'Ko‘ruvchi'] as AccessRole[])
+                          ).map((item) => <option key={item}>{item}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className={member.active ? 'access-simple-check' : 'access-simple-check off'}
+                          disabled={member.locked}
+                          onClick={() => updateMember(member.id, { active: !member.active })}
+                        >
+                          {member.active ? 'Faol' : 'Nofaol'}
+                        </button>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="access-edit-button"
+                          disabled={member.locked}
+                          onClick={() => {
+                            onMembersChange(members.filter((item) => item.id !== member.id));
+                            if (selectedMemberId === member.id) setSelectedMemberId(defaultRoleMembers[0].id);
+                          }}
+                        >
+                          {member.locked ? 'HIMOYA' : 'O‘CHIRISH'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           </article>
         </>
-      ) : (
-        <div className="access-load-status">
-          <span>⌕</span>
-          <div>
-            <strong>Monitoring yozuvlari hali mavjud emas</strong>
-            <small>
-              Faoliyat yozuvlari keyingi bosqichda shu yerda ko‘rinadi.
-            </small>
+      )}
+
+      {activeTab === 'permissions' && selectedMember && (
+        <section className="access-policy-page">
+          <div className="access-policy-toolbar">
+            <div>
+              <p className="eyebrow">ROL BO‘YICHA AMALLAR</p>
+              <h3>{selectedMember.name} uchun ruxsatlar</h3>
+            </div>
+            <label className="access-policy-role-picker">
+              <span>Ishtirokchi</span>
+              <select
+                value={selectedMember.id}
+                onChange={(event) => setSelectedMemberId(event.target.value)}
+              >
+                {members.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name} — {member.role}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-        </div>
+          <article className="access-policy-ledger">
+            <div className="access-policy-head">
+              <span>SAHIFA</span>
+              {accessActions.map((action) => <span key={action}>{action}</span>)}
+            </div>
+            <div className="access-policy-body">
+              {accessPages.map((page) => (
+                <div className="access-policy-row" key={page}>
+                  <strong>{page}</strong>
+                  {accessActions.map((action) => {
+                    const permission = `${page}:${action}`;
+                    const allowed = selectedMember.permissions.includes(permission);
+                    return (
+                      <button
+                        type="button"
+                        key={permission}
+                        className={allowed ? 'access-policy-toggle allowed' : 'access-policy-toggle'}
+                        disabled={selectedMember.locked}
+                        onClick={() => togglePermission(selectedMember, permission)}
+                        aria-label={`${page}: ${action}`}
+                      >
+                        {allowed ? '✓' : '–'}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </article>
+          {selectedMember.locked && (
+            <p className="access-policy-lock">
+              {adminEmail} — Bosh admin. Barcha ruxsatlar doim ochiq va o‘zgartirilmaydi.
+            </p>
+          )}
+        </section>
+      )}
+
+      {activeTab === 'monitoring' && (
+        <section className="access-monitoring-page">
+          <div className="access-monitoring-toolbar">
+            <div>
+              <p className="eyebrow">FAOLLIK NAZORATI</p>
+              <h3>Ruxsat holati</h3>
+            </div>
+          </div>
+          <div className="access-monitoring-ledger">
+            <div className="access-monitoring-head">
+              <span>F.I.Sh.</span><span>E-mail</span><span>Rol</span><span>Holat</span><span>Ruxsatlar</span><span>Izoh</span><span>YANGILANDI</span>
+            </div>
+            {members.map((member) => (
+              <div className="access-monitoring-row" key={member.id}>
+                <strong>{member.name}</strong>
+                <a href={`mailto:${member.email}`}>{member.email}</a>
+                <span>{member.role}</span>
+                <span className={member.active ? 'access-presence active' : 'access-presence'}><i />{member.active ? 'Faol' : 'Nofaol'}</span>
+                <span>{member.permissions.length} ta amal</span>
+                <span>{member.locked ? 'Bosh admin himoyalangan' : 'Mahalliy ruxsat yozuvi'}</span>
+                <span>Hozir</span>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
     </section>
   );
