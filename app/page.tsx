@@ -2438,9 +2438,9 @@ function ListenerForm({
                       name="startDate"
                       type="date"
                       required
-                      value={selectedStartDate}
-                      onChange={(event) => {
-                        const value = event.target.value;
+                      defaultValue={selectedStartDate}
+                      onInput={(event) => {
+                        const value = event.currentTarget.value;
                         setSelectedStartDate(value);
                         if (value) setSelectedYear(value.slice(0, 4));
                         setGroupPreviewOpen(false);
