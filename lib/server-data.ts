@@ -42,7 +42,18 @@ export type RoleDbRow = {
   permissions: string[] | string;
 };
 
-export const headAdminEmail = 'ilxomovb2023@gmail.com';
+export const protectedHeadAdmins = [
+  {
+    id: 'super-admin-ilxomovb2023',
+    fullName: 'Islom',
+    email: 'ilxomovb2023@gmail.com',
+  },
+  {
+    id: 'super-admin-etalim-appsheet',
+    fullName: 'E-talim',
+    email: 'etalim@appsheet.uz',
+  },
+] as const;
 export const accessActions = ['Ko‘rish', 'Kiritish', 'Tahrirlash', 'O‘chirish'];
 export const accessPages = [
   'Tinglovchilar',
@@ -54,6 +65,28 @@ export const accessPages = [
 export const headAdminPermissions = accessPages.flatMap((page) =>
   accessActions.map((action) => `${page}:${action}`),
 );
+
+export function isProtectedHeadAdmin(email: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  return protectedHeadAdmins.some(
+    (admin) => admin.email.toLowerCase() === normalizedEmail,
+  );
+}
+
+export function cloudflareAccessAdmin(request: Request) {
+  const email = (
+    request.headers.get('cf-access-authenticated-user-email') ?? ''
+  )
+    .trim()
+    .toLowerCase();
+  const assertion = request.headers.get('cf-access-jwt-assertion');
+  if (!email || !assertion || !isProtectedHeadAdmin(email)) return null;
+  return (
+    protectedHeadAdmins.find(
+      (admin) => admin.email.toLowerCase() === email,
+    ) ?? null
+  );
+}
 
 export function getDatabase() {
   const databaseUrl = (env as unknown as MtvEnvironment).DATABASE_URL;

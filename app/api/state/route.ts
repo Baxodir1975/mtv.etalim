@@ -1,11 +1,11 @@
 import {
   getDatabase,
-  headAdminEmail,
   headAdminPermissions,
   jsonResponse,
   listenerFromDb,
   logServerError,
   publicError,
+  protectedHeadAdmins,
   roleFromDb,
   type ListenerDbRow,
   type RoleDbRow,
@@ -18,27 +18,30 @@ export async function GET() {
     const sql = getDatabase();
     const permissionJson = JSON.stringify(headAdminPermissions);
 
-    // Reassert the protected account on every bootstrap so it cannot be
+    // Reassert the protected accounts on every bootstrap so they cannot be
     // downgraded by a stale client or an accidental database edit.
-    await sql`
-      INSERT INTO role_members (
-        id, full_name, email, role_name, is_active, is_locked, permissions
-      ) VALUES (
-        'super-admin-ilxomovb2023',
-        'Islom',
-        ${headAdminEmail},
-        'Bosh admin',
-        TRUE,
-        TRUE,
-        CAST(${permissionJson} AS JSONB)
-      )
-      ON CONFLICT (email) DO UPDATE SET
-        role_name = 'Bosh admin',
-        is_active = TRUE,
-        is_locked = TRUE,
-        permissions = EXCLUDED.permissions,
-        updated_at = NOW()
-    `;
+    for (const admin of protectedHeadAdmins) {
+      await sql`
+        INSERT INTO role_members (
+          id, full_name, email, role_name, is_active, is_locked, permissions
+        ) VALUES (
+          ${admin.id},
+          ${admin.fullName},
+          ${admin.email},
+          'Bosh admin',
+          TRUE,
+          TRUE,
+          CAST(${permissionJson} AS JSONB)
+        )
+        ON CONFLICT (email) DO UPDATE SET
+          full_name = EXCLUDED.full_name,
+          role_name = 'Bosh admin',
+          is_active = TRUE,
+          is_locked = TRUE,
+          permissions = EXCLUDED.permissions,
+          updated_at = NOW()
+      `;
+    }
     await sql`
       INSERT INTO app_settings (setting_key, setting_value)
       VALUES (

@@ -55,6 +55,13 @@ type RoleMember = {
   permissions: string[];
 };
 
+type AdminViewer = {
+  email: string;
+  name: string;
+  role: 'Bosh admin';
+  permissions: string[];
+};
+
 const STORAGE_KEYS = {
   telegram: 'mtv-etalimai.telegram.v1',
   deviceGroup: 'mtv-etalimai.device-group.v1',
@@ -64,7 +71,6 @@ const STORAGE_KEYS = {
   legacyMigration: 'mtv-etalimai.neon-migration.v1',
 };
 
-const adminEmail = 'ilxomovb2023@gmail.com';
 const accessActions = ['Ko‘rish', 'Kiritish', 'Tahrirlash', 'O‘chirish'];
 const accessPages = [
   'Tinglovchilar',
@@ -74,20 +80,56 @@ const accessPages = [
   'Rollar va ruxsatlar',
 ];
 
-const defaultRoleMembers: RoleMember[] = [
+const fullAdminPermissions = accessPages.flatMap((page) =>
+  accessActions.map((action) => `${page}:${action}`),
+);
+
+const protectedAdminAccounts = [
   {
     id: 'super-admin-ilxomovb2023',
     initials: 'ИБ',
     name: 'Islom',
-    email: adminEmail,
+    email: 'ilxomovb2023@gmail.com',
+  },
+  {
+    id: 'super-admin-etalim-appsheet',
+    initials: 'ET',
+    name: 'E-talim',
+    email: 'etalim@appsheet.uz',
+  },
+] as const;
+
+const protectedAdminEmails = new Set(
+  protectedAdminAccounts.map((admin) => admin.email.toLowerCase()),
+);
+
+const defaultRoleMembers: RoleMember[] = protectedAdminAccounts.map(
+  (admin) => ({
+    ...admin,
     role: 'Bosh admin',
     active: true,
     locked: true,
-    permissions: accessPages.flatMap((page) =>
-      accessActions.map((action) => `${page}:${action}`),
-    ),
-  },
-];
+    permissions: fullAdminPermissions,
+  }),
+);
+
+function protectHeadAdmins(members: RoleMember[]) {
+  const byEmail = new Map(
+    members.map((member) => [member.email.trim().toLowerCase(), member]),
+  );
+  const protectedMembers = defaultRoleMembers.map((admin) => ({
+    ...(byEmail.get(admin.email.toLowerCase()) ?? admin),
+    ...admin,
+    role: 'Bosh admin' as const,
+    active: true,
+    locked: true,
+    permissions: fullAdminPermissions,
+  }));
+  const otherMembers = members.filter(
+    (member) => !protectedAdminEmails.has(member.email.trim().toLowerCase()),
+  );
+  return [...protectedMembers, ...otherMembers];
+}
 
 function readStored<T>(key: string, fallback: T): T {
   try {
@@ -441,6 +483,11 @@ export default function Home() {
   const [storageReady, setStorageReady] = useState(false);
   const [serverLoading, setServerLoading] = useState(true);
   const [serverError, setServerError] = useState('');
+  const [adminEntry, setAdminEntry] = useState(false);
+  const [adminViewer, setAdminViewer] = useState<AdminViewer | null>(null);
+  const [adminSessionError, setAdminSessionError] = useState('');
+  const [adminEditingListener, setAdminEditingListener] =
+    useState<ListenerRecord | null>(null);
 
   useEffect(() => {
     const requestedSection = new URLSearchParams(window.location.search).get(
@@ -451,6 +498,39 @@ export default function Home() {
       navigation.some((item) => item.id === requestedSection)
     )
       setActiveSection(requestedSection);
+  }, []);
+
+  useEffect(() => {
+    if (!window.location.pathname.startsWith('/admin')) return;
+    setAdminEntry(true);
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch('/api/admin/session', {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        const result = (await response.json()) as {
+          authenticated?: boolean;
+          viewer?: AdminViewer;
+          error?: string;
+        };
+        if (!response.ok || !result.authenticated || !result.viewer) {
+          throw new Error(result.error || 'Bosh admin sessiyasi tasdiqlanmadi.');
+        }
+        setAdminViewer(result.viewer);
+        setAdminSessionError('');
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setAdminViewer(null);
+        setAdminSessionError(
+          error instanceof Error
+            ? error.message
+            : 'Bosh admin sessiyasi tasdiqlanmadi.',
+        );
+      }
+    })();
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -470,24 +550,7 @@ export default function Home() {
       STORAGE_KEYS.roles,
       defaultRoleMembers,
     );
-    const protectedAdmin = storedRoles.find(
-      (member) => member.email.toLowerCase() === adminEmail,
-    );
-    setRoleMembers(
-      protectedAdmin
-        ? storedRoles.map((member) =>
-            member.email.toLowerCase() === adminEmail
-              ? {
-                  ...member,
-                  role: 'Bosh admin',
-                  active: true,
-                  locked: true,
-                  permissions: defaultRoleMembers[0].permissions,
-                }
-              : member,
-          )
-        : defaultRoleMembers,
-    );
+    setRoleMembers(protectHeadAdmins(storedRoles));
     setStorageReady(true);
 
     const controller = new AbortController();
@@ -598,24 +661,7 @@ export default function Home() {
           setTelegramGroupUrl(result.telegramGroupUrl);
         }
         if (Array.isArray(result.roles) && result.roles.length) {
-          const serverHasAdmin = result.roles.some(
-            (member) => member.email.toLowerCase() === adminEmail,
-          );
-          setRoleMembers(
-            serverHasAdmin
-              ? result.roles.map((member) =>
-                  member.email.toLowerCase() === adminEmail
-                    ? {
-                        ...member,
-                        role: 'Bosh admin',
-                        active: true,
-                        locked: true,
-                        permissions: defaultRoleMembers[0].permissions,
-                      }
-                    : member,
-                )
-              : [defaultRoleMembers[0], ...result.roles],
-          );
+          setRoleMembers(protectHeadAdmins(result.roles));
         }
         setServerError(
           migrationFailures
@@ -662,6 +708,13 @@ export default function Home() {
     url.searchParams.set('section', section);
     window.history.replaceState({}, '', url);
   }
+
+  const canSelectAnyGroup = Boolean(adminViewer);
+  const profileName = adminViewer?.name ?? 'Tinglovchi';
+  const profileEmail = adminViewer?.email ?? 'Ommaviy ro‘yxatdan o‘tish';
+  const profileInitials = adminViewer
+    ? initialsFor(adminViewer.name)
+    : 'T';
 
   return (
     <main className="app-shell">
@@ -777,11 +830,11 @@ export default function Home() {
           </div>
         </nav>
         <div className="profile-mini">
-          <div className="avatar">ИБ</div>
+          <div className="avatar">{profileInitials}</div>
           <div>
-            <strong>Islom</strong>
-            <span>{adminEmail}</span>
-            <small>Bosh admin</small>
+            <strong>{profileName}</strong>
+            <span>{profileEmail}</span>
+            <small>{adminViewer ? 'Bosh admin' : 'Tinglovchi'}</small>
           </div>
           <button aria-label="Akkaunt">•••</button>
         </div>
@@ -805,7 +858,7 @@ export default function Home() {
               ♟<i />
             </button>
             <button className="lang-button">O‘Z</button>
-            <div className="top-avatar">ИБ</div>
+            <div className="top-avatar">{profileInitials}</div>
           </div>
         </header>
         <div className="content">
@@ -819,10 +872,36 @@ export default function Home() {
                 : `Ma’lumotlar bazasi: ${serverError}`}
             </div>
           )}
+          {adminEntry && adminSessionError && (
+            <div className="server-state error" role="alert">
+              Bosh admin kirishi: {adminSessionError}
+            </div>
+          )}
           {activeSection === 'listeners' && (
             <ListenersPanel
               rows={listeners}
-              onOpenForm={() => openSection('form')}
+              canManageListeners={canSelectAnyGroup}
+              onOpenForm={() => {
+                setAdminEditingListener(null);
+                openSection('form');
+              }}
+              onEdit={(listener) => {
+                setAdminEditingListener(listener);
+                openSection('form');
+              }}
+              onDelete={async (listenerId) => {
+                const response = await fetch(
+                  `/api/admin/listeners/${encodeURIComponent(listenerId)}`,
+                  { method: 'DELETE' },
+                );
+                const result = (await response.json()) as { error?: string };
+                if (!response.ok) {
+                  throw new Error(result.error || 'Tinglovchini o‘chirib bo‘lmadi.');
+                }
+                setListeners((current) =>
+                  current.filter((listener) => listener.id !== listenerId),
+                );
+              }}
               telegramGroupUrl={telegramGroupUrl}
               onTelegramGroupUrlChange={setTelegramGroupUrl}
             />
@@ -832,7 +911,12 @@ export default function Home() {
               rows={listeners}
               telegramGroupUrl={telegramGroupUrl}
               lockedGroup={deviceGroup}
-              onCancel={() => openSection('listeners')}
+              canSelectAnyGroup={canSelectAnyGroup}
+              initialEditingRecord={adminEditingListener}
+              onCancel={() => {
+                setAdminEditingListener(null);
+                openSection('listeners');
+              }}
               onSave={async (listener, files, editingId) => {
                 const payload = new FormData();
                 payload.set('payload', JSON.stringify(listener));
@@ -861,11 +945,12 @@ export default function Home() {
                       )
                     : [...current, record],
                 );
-                if (!editingId && listener.group) {
+                if (!canSelectAnyGroup && !editingId && listener.group) {
                   setDeviceGroup(listener.group);
                   setDeviceListenerId(record.id);
                 }
                 setServerError('');
+                setAdminEditingListener(null);
                 return record;
               }}
             />
@@ -885,12 +970,18 @@ export default function Home() {
 
 function ListenersPanel({
   rows,
+  canManageListeners,
   onOpenForm,
+  onEdit,
+  onDelete,
   telegramGroupUrl,
   onTelegramGroupUrlChange,
 }: {
   rows: ListenerRecord[];
+  canManageListeners: boolean;
   onOpenForm: () => void;
+  onEdit: (listener: ListenerRecord) => void;
+  onDelete: (listenerId: string) => Promise<void>;
   telegramGroupUrl: string;
   onTelegramGroupUrlChange: (value: string) => void;
 }) {
@@ -905,6 +996,8 @@ function ListenersPanel({
   const [telegramEditing, setTelegramEditing] = useState(false);
   const [month, setMonth] = useState('all');
   const [copied, setCopied] = useState('');
+  const [deletingId, setDeletingId] = useState('');
+  const [actionError, setActionError] = useState('');
 
   const registrationUrl = 'https://mtv.etalimai.uz/?section=form';
   const validTelegramUrl = /^https:\/\/(?:t\.me|telegram\.me)\/.+/i.test(
@@ -931,6 +1024,8 @@ function ListenersPanel({
           .includes(workplaceQuery.toLowerCase());
         const matchesDate =
           !dateFilter || row.date === dateFilter.split('-').reverse().join('.');
+        const matchesMonth =
+          month === 'all' || row.startDate.slice(5, 7) === month;
         const matchesGroup = group === 'all' || row.group === group;
         const matchesRegion = region === 'all' || row.region === region;
         const matchesDistrict = district === 'all' || row.district === district;
@@ -941,14 +1036,80 @@ function ListenersPanel({
           matchesQuery &&
           matchesWorkplace &&
           matchesDate &&
+          matchesMonth &&
           matchesGroup &&
           matchesRegion &&
           matchesDistrict &&
           matchesPhone
         );
       }),
-    [query, workplaceQuery, dateFilter, group, region, district, phone, rows],
+    [
+      query,
+      workplaceQuery,
+      dateFilter,
+      month,
+      group,
+      region,
+      district,
+      phone,
+      rows,
+    ],
   );
+
+  function exportToWord() {
+    const escapeHtml = (value: unknown) =>
+      String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+    const bodyRows = filteredRows
+      .map(
+        (row, index) => `<tr>
+          <td>${index + 1}</td><td>${escapeHtml(row.date)}</td>
+          <td>${escapeHtml(row.group)}</td><td>${escapeHtml(row.name)}</td>
+          <td>${escapeHtml(row.workplace || row.organization)}</td>
+          <td>${escapeHtml(row.region)}</td><td>${escapeHtml(row.district)}</td>
+          <td>${escapeHtml(row.phone)}</td><td>${escapeHtml(row.position)}</td>
+          <td>${escapeHtml(row.age ?? '—')}</td>
+        </tr>`,
+      )
+      .join('');
+    const wordDocument = `<!doctype html><html><head><meta charset="utf-8">
+      <style>body{font-family:Arial,sans-serif}h1{font-size:18px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #777;padding:6px;font-size:10px}th{background:#dceeff}</style>
+      </head><body><h1>MTV E-TA’LIM AI — Tinglovchilar</h1><table>
+      <thead><tr><th>№</th><th>MO sana</th><th>Guruh</th><th>F.I.Sh.</th><th>Ish joyi (MTM)</th><th>Hudud</th><th>Tuman-shahar</th><th>Telefon</th><th>Lavozim</th><th>Yoshi</th></tr></thead>
+      <tbody>${bodyRows}</tbody></table></body></html>`;
+    const blob = new Blob(['\ufeff', wordDocument], {
+      type: 'application/msword;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'mtv-etalimai-tinglovchilar.doc';
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function deleteListener(row: ListenerRecord) {
+    if (
+      !window.confirm(
+        `${row.name} маълумотини ўчиришни тасдиқлайсизми? Бу амални қайтариб бўлмайди.`,
+      )
+    )
+      return;
+    setDeletingId(row.id);
+    setActionError('');
+    try {
+      await onDelete(row.id);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : 'Tinglovchini o‘chirib bo‘lmadi.',
+      );
+    } finally {
+      setDeletingId('');
+    }
+  }
 
   const regions = [...new Set(rows.map((row) => row.region))];
   const districts = [
@@ -966,6 +1127,11 @@ function ListenersPanel({
           ✓ {copied} nusxalandi
         </div>
       )}
+      {actionError && (
+        <div className="notice error" role="alert">
+          ! {actionError}
+        </div>
+      )}
       <header className="ting-hero ting-hero-unified has-admin-links listener-toolbar-only">
         <div className="listener-admin-links">
           <article className="listener-quick-link registration">
@@ -980,7 +1146,7 @@ function ListenersPanel({
               <span className="listener-client-icon">↗</span>
               <span className="listener-link-copy">
                 <b>Ro‘yxatdan o‘tish</b>
-                <code>mtv.etalimai.uz/tinglovchi.html</code>
+                <code>mtv.etalimai.uz/?section=form</code>
               </span>
               <i>→</i>
             </a>
@@ -1081,10 +1247,21 @@ function ListenersPanel({
               <option>Nomzod direktor</option>
             </select>
           </label>
+          {canManageListeners && (
+            <button
+              className="listener-admin-create"
+              type="button"
+              onClick={onOpenForm}
+            >
+              <b>＋</b>
+              <span>KIRITISH</span>
+            </button>
+          )}
           <button
             className="listener-word-export"
             type="button"
             disabled={!filteredRows.length}
+            onClick={exportToWord}
           >
             <b>W</b>
             <span>WORD</span>
@@ -1107,6 +1284,7 @@ function ListenersPanel({
                 <col className="col-phone" />
                 <col className="col-position" />
                 <col className="col-age" />
+                {canManageListeners && <col className="col-actions" />}
               </colgroup>
               <thead>
                 <tr>
@@ -1121,6 +1299,7 @@ function ListenersPanel({
                   <th>Telefon raqam</th>
                   <th>Lavozim</th>
                   <th>Yoshi</th>
+                  {canManageListeners && <th>AMALLAR</th>}
                 </tr>
                 <tr className="listener-filter-row">
                   <th>—</th>
@@ -1207,6 +1386,7 @@ function ListenersPanel({
                       <option>Barchasi</option>
                     </select>
                   </th>
+                  {canManageListeners && <th>—</th>}
                 </tr>
               </thead>
               <tbody>
@@ -1239,6 +1419,21 @@ function ListenersPanel({
                     </td>
                     <td className="listener-position">{row.position}</td>
                     <td className="listener-age">{row.age ?? '—'}</td>
+                    {canManageListeners && (
+                      <td className="listener-admin-actions">
+                        <button type="button" onClick={() => onEdit(row)}>
+                          TAHRIRLASH
+                        </button>
+                        <button
+                          className="danger"
+                          type="button"
+                          disabled={deletingId === row.id}
+                          onClick={() => void deleteListener(row)}
+                        >
+                          {deletingId === row.id ? '…' : 'O‘CHIRISH'}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -1269,16 +1464,70 @@ function fileDataUrl(file: File) {
   });
 }
 
+const uzbekMonthNames = [
+  'yanvar',
+  'fevral',
+  'mart',
+  'aprel',
+  'may',
+  'iyun',
+  'iyul',
+  'avgust',
+  'sentyabr',
+  'oktyabr',
+  'noyabr',
+  'dekabr',
+];
+
+function groupPreviewTitle(
+  group: string,
+  rows: ListenerRecord[],
+  fallbackYear: string,
+  fallbackStartDate: string,
+) {
+  if (!group) return '';
+  const metadataCounts = new Map<string, number>();
+  for (const row of rows) {
+    const startDate = row.startDate || '';
+    const year = row.year || startDate.slice(0, 4);
+    const month = /^\d{4}-(\d{2})/.exec(startDate)?.[1] || '';
+    if (!year && !month) continue;
+    const key = `${year}|${month}`;
+    metadataCounts.set(key, (metadataCounts.get(key) ?? 0) + 1);
+  }
+  const [storedYear = '', storedMonth = ''] =
+    [...metadataCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0].split(
+      '|',
+    ) ?? [];
+  const year = storedYear || fallbackYear || fallbackStartDate.slice(0, 4);
+  const monthNumber = Number(
+    storedMonth || /^\d{4}-(\d{2})/.exec(fallbackStartDate)?.[1] || 0,
+  );
+  const month = uzbekMonthNames[monthNumber - 1] || '';
+  const parsedGroup = /^(.*?)\s*\((\d+)-guruh\)$/i.exec(group.trim());
+  if (!parsedGroup) return group;
+  const details = [
+    year ? `${year} yil` : '',
+    month,
+    `${parsedGroup[2]}-guruh`,
+  ].filter(Boolean);
+  return `${parsedGroup[1].trim()} (${details.join(', ')})`;
+}
+
 function ListenerForm({
   rows,
   telegramGroupUrl,
   lockedGroup,
+  canSelectAnyGroup,
+  initialEditingRecord,
   onSave,
   onCancel,
 }: {
   rows: ListenerRecord[];
   telegramGroupUrl: string;
   lockedGroup: string;
+  canSelectAnyGroup: boolean;
+  initialEditingRecord: ListenerRecord | null;
   onSave: (
     listener: ListenerDraft,
     files: ListenerUploads,
@@ -1289,15 +1538,31 @@ function ListenerForm({
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [selectedGroup, setSelectedGroup] = useState('');
-  const [selectedRegion, setSelectedRegion] = useState('');
-  const [selectedDistrict, setSelectedDistrict] = useState('');
-  const [phoneDigits, setPhoneDigits] = useState('');
+  const [selectedGroup, setSelectedGroup] = useState(
+    initialEditingRecord?.group || '',
+  );
+  const [selectedStartDate, setSelectedStartDate] = useState(
+    initialEditingRecord?.startDate || '',
+  );
+  const [selectedYear, setSelectedYear] = useState(
+    initialEditingRecord?.year || '2026',
+  );
+  const [selectedRegion, setSelectedRegion] = useState(
+    initialEditingRecord?.region || '',
+  );
+  const [selectedDistrict, setSelectedDistrict] = useState(
+    initialEditingRecord?.district || '',
+  );
+  const [phoneDigits, setPhoneDigits] = useState(
+    initialEditingRecord?.phone.replace(/\D/g, '').slice(-9) || '',
+  );
   const [groupPreviewOpen, setGroupPreviewOpen] = useState(false);
   const [cardsOnly, setCardsOnly] = useState(false);
-  const [photoPreview, setPhotoPreview] = useState('');
+  const [photoPreview, setPhotoPreview] = useState(
+    initialEditingRecord?.photo || '',
+  );
   const [editingRecord, setEditingRecord] = useState<ListenerRecord | null>(
-    null,
+    initialEditingRecord,
   );
   const [zoomedRecord, setZoomedRecord] = useState<ListenerRecord | null>(null);
 
@@ -1315,15 +1580,24 @@ function ListenerForm({
     () => rows.filter((row) => row.group === detectedGroup),
     [rows, detectedGroup],
   );
-  const groupIsLocked = Boolean(
-    editingRecord || (lockedGroup && !editingRecord),
+  const detectedGroupTitle = useMemo(
+    () =>
+      groupPreviewTitle(
+        detectedGroup,
+        detectedGroupRows,
+        selectedYear,
+        selectedStartDate,
+      ),
+    [detectedGroup, detectedGroupRows, selectedStartDate, selectedYear],
   );
+  const groupIsLocked =
+    !canSelectAnyGroup && Boolean(editingRecord || lockedGroup);
 
   useEffect(() => {
-    if (!editingRecord && lockedGroup) {
+    if (!canSelectAnyGroup && !editingRecord && lockedGroup) {
       setSelectedGroup(lockedGroup);
     }
-  }, [editingRecord, lockedGroup]);
+  }, [canSelectAnyGroup, editingRecord, lockedGroup]);
 
   function openGroupPreview() {
     if (!detectedGroup) {
@@ -1345,6 +1619,8 @@ function ListenerForm({
     setCardsOnly(false);
     setEditingRecord(row);
     setSelectedGroup(row.group);
+    setSelectedStartDate(row.startDate || '');
+    setSelectedYear(row.year || '2026');
     setSelectedRegion(row.region);
     setSelectedDistrict(row.district);
     setPhoneDigits(row.phone.replace(/\D/g, '').slice(-9));
@@ -1363,6 +1639,8 @@ function ListenerForm({
     setCardsOnly(false);
     setEditingRecord(null);
     setSelectedGroup('');
+    setSelectedStartDate('');
+    setSelectedYear('2026');
     setSelectedRegion('');
     setSelectedDistrict('');
     setPhoneDigits('');
@@ -1545,7 +1823,7 @@ function ListenerForm({
                 <div>
                   <small>TELEFON / GURUH BO‘YICHA</small>
                   <h4>
-                    👥 {detectedGroup} · {detectedGroupRows.length} nafar
+                    👥 {detectedGroupTitle} · {detectedGroupRows.length} nafar
                   </h4>
                 </div>
                 {cardsOnly ? (
@@ -1658,12 +1936,14 @@ function ListenerForm({
                             <span>
                               To‘ldirilgan {progress.completed}/{progress.total}
                             </span>
-                            <button
-                              type="button"
-                              onClick={() => editRecord(row)}
-                            >
-                              ✎ TAHRIRLASH
-                            </button>
+                            {(canSelectAnyGroup || isMe) && (
+                              <button
+                                type="button"
+                                onClick={() => editRecord(row)}
+                              >
+                                ✎ TAHRIRLASH
+                              </button>
+                            )}
                           </footer>
                         )}
                       </article>
@@ -1695,14 +1975,18 @@ function ListenerForm({
                     <input
                       name="startDate"
                       type="date"
-                      defaultValue={editingRecord?.startDate || ''}
+                      value={selectedStartDate}
+                      onChange={(event) =>
+                        setSelectedStartDate(event.target.value)
+                      }
                     />
                   </label>
                   <label>
                     <span>Yil</span>
                     <input
                       name="year"
-                      defaultValue={editingRecord?.year || '2026'}
+                      value={selectedYear}
+                      onChange={(event) => setSelectedYear(event.target.value)}
                       maxLength={4}
                     />
                   </label>
@@ -1738,7 +2022,7 @@ function ListenerForm({
                         <option key={item}>{item}</option>
                       ))}
                     </select>
-                    {lockedGroup && !editingRecord && (
+                    {!canSelectAnyGroup && lockedGroup && !editingRecord && (
                       <small className="phone-group-found">
                         🔒 Bu qurilma uchun guruh birinchi ro‘yxatdan o‘tishdan keyin biriktirilgan.
                       </small>
@@ -2647,7 +2931,7 @@ function RolesPanel({
           </article>
           {selectedMember.locked && (
             <p className="access-policy-lock">
-              {adminEmail} — Bosh admin. Barcha ruxsatlar doim ochiq va o‘zgartirilmaydi.
+              {selectedMember.email} — Bosh admin. Barcha ruxsatlar doim ochiq va o‘zgartirilmaydi.
             </p>
           )}
         </section>
