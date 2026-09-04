@@ -8,7 +8,8 @@ import './access-management.css';
 export const metadata: Metadata = {
   metadataBase: new URL('https://mtv.etalimai.uz'),
   title: 'MTV E-TA’LIM AI — Тингловчилар ва манбалар',
-  description: 'Тингловчиларни рўйхатдан ўтказиш, ўқув манбалари ва иштирокчилар роллари учун ягона таълим муҳити.',
+  description:
+    'Тингловчиларни рўйхатдан ўтказиш, ўқув манбалари ва иштирокчилар роллари учун ягона таълим муҳити.',
   openGraph: {
     title: 'MTV E-TA’LIM AI',
     description: 'Билимни бирга ривожлантирамиз.',
@@ -16,7 +17,9 @@ export const metadata: Metadata = {
     url: 'https://mtv.etalimai.uz',
     siteName: 'MTV E-TA’LIM AI',
     locale: 'uz_UZ',
-    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'MTV E-TA’LIM AI' }],
+    images: [
+      { url: '/og.png', width: 1200, height: 630, alt: 'MTV E-TA’LIM AI' },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
@@ -26,9 +29,11 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="uz-Cyrl">
+    <html lang="uz-Latn">
       <body>{children}</body>
     </html>
   );

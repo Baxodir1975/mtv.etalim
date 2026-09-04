@@ -2,7 +2,7 @@ import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
 import { defineConfig } from 'vite';
-import hostingConfig from './.openai/hosting.json';
+import hostingConfig from './.openai/hosting.json' with { type: 'json' };
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   '00000000-0000-4000-8000-000000000000';
@@ -13,8 +13,14 @@ const { d1, r2 } = hostingConfig;
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 
 const localBindingConfig = {
+  name: 'mtv-etalimai',
   main: 'vinext/server/fetch-handler',
+  compatibility_date: '2026-05-15',
   compatibility_flags: ['nodejs_compat'],
+  keep_vars: true,
+  secrets: {
+    required: ['DATABASE_URL', 'ADMIN_ACCESS_PASSWORD', 'AUTH_SESSION_SECRET'],
+  },
   ratelimits: [
     {
       name: 'REGISTRATION_RATE_LIMITER',

@@ -1,6 +1,13 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from 'react';
 
 type SectionId = 'listeners' | 'form' | 'terms' | 'sources' | 'roles';
 
@@ -58,18 +65,19 @@ type RoleMember = {
 type AdminViewer = {
   email: string;
   name: string;
-  role: 'Bosh admin';
+  role: AccessRole;
   permissions: string[];
 };
 
-const STORAGE_KEYS = {
-  telegram: 'mtv-etalimai.telegram.v1',
-  deviceGroup: 'mtv-etalimai.device-group.v1',
-  deviceListener: 'mtv-etalimai.device-listener.v1',
-  roles: 'mtv-etalimai.roles.v2',
-  legacyListeners: 'mtv-etalimai.listeners.v3',
-  legacyMigration: 'mtv-etalimai.neon-migration.v1',
+type ListenerSources = {
+  groups: string[];
+  districtsByRegion: Record<string, string[]>;
 };
+
+function formText(data: FormData, key: string) {
+  const value = data.get(key);
+  return typeof value === 'string' ? value.trim() : '';
+}
 
 const accessActions = ['Ko‘rish', 'Kiritish', 'Tahrirlash', 'O‘chirish'];
 const accessPages = [
@@ -129,56 +137,6 @@ function protectHeadAdmins(members: RoleMember[]) {
     (member) => !protectedAdminEmails.has(member.email.trim().toLowerCase()),
   );
   return [...protectedMembers, ...otherMembers];
-}
-
-function readStored<T>(key: string, fallback: T): T {
-  try {
-    const value = window.localStorage.getItem(key);
-    return value ? (JSON.parse(value) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function saveStored(key: string, value: unknown) {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Browser storage may be unavailable or full; the current page remains usable.
-  }
-}
-
-function normalizedPhone(value: unknown) {
-  return typeof value === 'string'
-    ? value.replace(/\D/g, '').slice(-9)
-    : '';
-}
-
-function legacyDataUrlFile(value: unknown, baseName: string) {
-  if (typeof value !== 'string') return undefined;
-  const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(value);
-  if (!match) return undefined;
-  try {
-    const binary = window.atob(match[2]);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    const extensions: Record<string, string> = {
-      'image/jpeg': 'jpg',
-      'image/png': 'png',
-      'image/webp': 'webp',
-      'application/pdf': 'pdf',
-    };
-    const mimeType = match[1].toLowerCase();
-    return new File(
-      [bytes],
-      `${baseName}.${extensions[mimeType] || 'bin'}`,
-      { type: mimeType },
-    );
-  } catch {
-    return undefined;
-  }
 }
 
 const navigation: Array<{ id: SectionId; label: string }> = [
@@ -485,7 +443,7 @@ function AdminLogin({
 
   useEffect(() => setMessage(error), [error]);
 
-  async function signIn(event: FormEvent<HTMLFormElement>) {
+  async function signIn(event: SyntheticEvent<HTMLFormElement, SubmitEvent>) {
     event.preventDefault();
     if (submitting || !onAuthenticated) return;
     setSubmitting(true);
@@ -530,9 +488,9 @@ function AdminLogin({
           olish uchun himoyalangan boshqaruv sahifasi.
         </p>
         {loading ? (
-          <div className="admin-login-loading" role="status">
+          <output className="admin-login-loading">
             <span aria-hidden="true" /> Sessiya tekshirilmoqda…
-          </div>
+          </output>
         ) : (
           <form onSubmit={signIn}>
             <label>
@@ -573,9 +531,11 @@ function AdminLogin({
             </button>
           </form>
         )}
-        <a href="/?section=form">← Ommaviy tinglovchi formasiga qaytish</a>
+        <Link href="/?section=form">
+          ← Ommaviy tinglovchi formasiga qaytish
+        </Link>
         <small>
-          Sessiya 7 kun davomida ushbu brauzerning himoyalangan cookie faylida
+          Sessiya 8 soat davomida ushbu brauzerning himoyalangan cookie faylida
           saqlanadi.
         </small>
       </section>
@@ -584,10 +544,11 @@ function AdminLogin({
 }
 
 export default function Home() {
-  const [activeSection, setActiveSection] = useState<SectionId>('listeners');
+  const [activeSection, setActiveSection] = useState<SectionId>('form');
   const [listenerMenuOpen, setListenerMenuOpen] = useState(true);
   const [accessMenuOpen, setAccessMenuOpen] = useState(false);
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [listeners, setListeners] = useState<ListenerRecord[]>(listenerRows);
   const [telegramGroupUrl, setTelegramGroupUrl] = useState(
     'https://t.me/+HQ9koTozY_gxMGRi',
@@ -595,10 +556,12 @@ export default function Home() {
   const [deviceGroup, setDeviceGroup] = useState('');
   const [deviceListenerId, setDeviceListenerId] = useState('');
   const [deviceBindingVerified, setDeviceBindingVerified] = useState(false);
-  const [roleMembers, setRoleMembers] = useState<RoleMember[]>(
-    defaultRoleMembers,
-  );
-  const [storageReady, setStorageReady] = useState(false);
+  const [roleMembers, setRoleMembers] =
+    useState<RoleMember[]>(defaultRoleMembers);
+  const [listenerSources, setListenerSources] = useState<ListenerSources>({
+    groups: candidateGroups,
+    districtsByRegion,
+  });
   const [serverLoading, setServerLoading] = useState(true);
   const [serverError, setServerError] = useState('');
   const [adminEntry, setAdminEntry] = useState(false);
@@ -606,28 +569,37 @@ export default function Home() {
   const [adminViewer, setAdminViewer] = useState<AdminViewer | null>(null);
   const [adminSessionChecked, setAdminSessionChecked] = useState(false);
   const [adminSessionError, setAdminSessionError] = useState('');
+  const [roleSaving, setRoleSaving] = useState(false);
+  const roleSavePending = useRef(false);
   const [adminEditingListener, setAdminEditingListener] =
     useState<ListenerRecord | null>(null);
 
   useEffect(() => {
-    setAdminEntry(window.location.pathname.startsWith('/admin'));
+    const isAdminPath = window.location.pathname.startsWith('/admin');
+    setAdminEntry(isAdminPath);
     const requestedSection = new URLSearchParams(window.location.search).get(
       'section',
     ) as SectionId | null;
     if (
       requestedSection &&
       navigation.some((item) => item.id === requestedSection)
-    )
-      setActiveSection(requestedSection);
+    ) {
+      if (
+        isAdminPath ||
+        requestedSection === 'form' ||
+        requestedSection === 'terms'
+      ) {
+        setActiveSection(requestedSection);
+      } else {
+        setActiveSection('form');
+      }
+    } else {
+      setActiveSection(isAdminPath ? 'listeners' : 'form');
+    }
     setRouteReady(true);
   }, []);
 
   useEffect(() => {
-    if (!window.location.pathname.startsWith('/admin')) {
-      setAdminSessionChecked(true);
-      return;
-    }
-    setAdminEntry(true);
     const controller = new AbortController();
     void (async () => {
       try {
@@ -646,7 +618,9 @@ export default function Home() {
           return;
         }
         if (!response.ok || !result.authenticated || !result.viewer) {
-          throw new Error(result.error || 'Bosh admin sessiyasi tasdiqlanmadi.');
+          throw new Error(
+            result.error || 'Bosh admin sessiyasi tasdiqlanmadi.',
+          );
         }
         setAdminViewer(result.viewer);
         setAdminSessionError('');
@@ -667,28 +641,10 @@ export default function Home() {
 
   useEffect(() => {
     if (!routeReady || !adminSessionChecked) return;
-    if (adminEntry && (!adminSessionChecked || !adminViewer)) {
+    if (adminEntry && !adminViewer) {
       setServerLoading(false);
       return;
     }
-    const legacyListeners = readStored<ListenerRecord[]>(
-      STORAGE_KEYS.legacyListeners,
-      [],
-    );
-    setTelegramGroupUrl(
-      readStored<string>(
-        STORAGE_KEYS.telegram,
-        'https://t.me/+HQ9koTozY_gxMGRi',
-      ),
-    );
-    setDeviceGroup(readStored<string>(STORAGE_KEYS.deviceGroup, ''));
-    setDeviceListenerId(readStored<string>(STORAGE_KEYS.deviceListener, ''));
-    const storedRoles = readStored<RoleMember[]>(
-      STORAGE_KEYS.roles,
-      defaultRoleMembers,
-    );
-    setRoleMembers(protectHeadAdmins(storedRoles));
-    setStorageReady(true);
 
     const controller = new AbortController();
     void (async () => {
@@ -709,7 +665,11 @@ export default function Home() {
             listenerId?: string;
             group?: string;
           };
-          if (deviceResult.bound && deviceResult.listenerId && deviceResult.group) {
+          if (
+            deviceResult.bound &&
+            deviceResult.listenerId &&
+            deviceResult.group
+          ) {
             setDeviceGroup(deviceResult.group);
             setDeviceListenerId(deviceResult.listenerId);
             setDeviceBindingVerified(true);
@@ -719,114 +679,35 @@ export default function Home() {
             setDeviceBindingVerified(false);
           }
         }
-        let result = (await response.json()) as {
+        const result = (await response.json()) as {
           error?: string;
           listeners?: ListenerRecord[];
           roles?: RoleMember[];
           telegramGroupUrl?: string;
+          sources?: ListenerSources;
         };
         if (!response.ok) {
           throw new Error(result.error || 'Ma’lumotlarni yuklab bo‘lmadi.');
         }
-        let serverListeners = Array.isArray(result.listeners)
-          ? result.listeners
-          : [];
-        let migrationFailures = 0;
-        const migrationAlreadyCompleted = readStored<boolean>(
-          STORAGE_KEYS.legacyMigration,
-          false,
-        );
-        if (
-          !migrationAlreadyCompleted &&
-          Array.isArray(legacyListeners) &&
-          legacyListeners.length
-        ) {
-          const serverPhones = new Set(
-            serverListeners.map((listener) => normalizedPhone(listener.phone)),
-          );
-          let serverChanged = false;
-
-          for (const legacy of legacyListeners) {
-            const phone = normalizedPhone(legacy?.phone);
-            if (!phone || serverPhones.has(phone)) continue;
-
-            const { id: _legacyId, status: _legacyStatus, ...legacyDraft } =
-              legacy;
-            const payload = new FormData();
-            payload.set(
-              'payload',
-              JSON.stringify({
-                ...legacyDraft,
-                photo: '',
-                orderFile: '',
-                passportFront: '',
-                passportBack: '',
-              }),
-            );
-            const legacyFiles: ListenerUploads = {
-              photo: legacyDataUrlFile(legacy.photo, `photo-${phone}`),
-              order: legacyDataUrlFile(legacy.orderFile, `order-${phone}`),
-              passportFront: legacyDataUrlFile(
-                legacy.passportFront,
-                `passport-front-${phone}`,
-              ),
-              passportBack: legacyDataUrlFile(
-                legacy.passportBack,
-                `passport-back-${phone}`,
-              ),
-            };
-            for (const [field, file] of Object.entries(legacyFiles)) {
-              if (file) payload.set(field, file);
-            }
-
-            try {
-              const migrationResponse = await fetch('/api/listeners', {
-                method: 'POST',
-                body: payload,
-                signal: controller.signal,
-              });
-              if (migrationResponse.ok || migrationResponse.status === 409) {
-                serverPhones.add(phone);
-                serverChanged = serverChanged || migrationResponse.ok;
-              } else {
-                migrationFailures += 1;
-              }
-            } catch {
-              if (controller.signal.aborted) return;
-              migrationFailures += 1;
-            }
-          }
-
-          if (serverChanged) {
-            const refreshedResponse = await fetch('/api/state', {
-              cache: 'no-store',
-              signal: controller.signal,
-            });
-            const refreshedResult = (await refreshedResponse.json()) as typeof result;
-            if (refreshedResponse.ok) {
-              result = refreshedResult;
-              serverListeners = Array.isArray(result.listeners)
-                ? result.listeners
-                : serverListeners;
-            }
-          }
-          if (!migrationFailures) {
-            saveStored(STORAGE_KEYS.legacyMigration, true);
-          }
-        }
-
-        setListeners(serverListeners);
+        setListeners(Array.isArray(result.listeners) ? result.listeners : []);
         if (result.telegramGroupUrl) {
           setTelegramGroupUrl(result.telegramGroupUrl);
         }
         if (Array.isArray(result.roles) && result.roles.length) {
           setRoleMembers(protectHeadAdmins(result.roles));
         }
-        setServerError(
-          migrationFailures
-            ? `${migrationFailures} ta eski tinglovchi Neon bazasiga ko‘chirilmadi. Forma ma’lumotlarini tekshirib, qayta urinib ko‘ring.`
-            : '',
-        );
+        if (result.sources) {
+          setListenerSources({
+            groups: result.sources.groups.length
+              ? result.sources.groups
+              : candidateGroups,
+            districtsByRegion: Object.keys(result.sources.districtsByRegion)
+              .length
+              ? result.sources.districtsByRegion
+              : districtsByRegion,
+          });
+        }
+        setServerError('');
       } catch (error) {
         if (controller.signal.aborted) return;
         setServerError(
@@ -842,38 +723,143 @@ export default function Home() {
     return () => controller.abort();
   }, [adminEntry, adminSessionChecked, adminViewer, routeReady]);
 
-  useEffect(() => {
-    if (!storageReady) return;
-    saveStored(STORAGE_KEYS.telegram, telegramGroupUrl);
-  }, [telegramGroupUrl, storageReady]);
-
-  useEffect(() => {
-    if (!storageReady) return;
-    saveStored(STORAGE_KEYS.roles, roleMembers);
-  }, [roleMembers, storageReady]);
-
-  useEffect(() => {
-    if (!storageReady) return;
-    // Keep the scalar values in the same JSON format as every other stored value.
-    // `readStored` uses JSON.parse, so raw localStorage strings would be lost after
-    // a page refresh and could accidentally unlock the enrolment group.
-    saveStored(STORAGE_KEYS.deviceGroup, deviceGroup);
-    saveStored(STORAGE_KEYS.deviceListener, deviceListenerId);
-  }, [deviceGroup, deviceListenerId, storageReady]);
-
   function openSection(section: SectionId) {
+    const permissionBySection: Partial<Record<SectionId, string>> = {
+      listeners: 'Tinglovchilar:Ko‘rish',
+      form: 'Tinglovchi formasi:Ko‘rish',
+      sources: 'Manbalar:Ko‘rish',
+      roles: 'Rollar va ruxsatlar:Ko‘rish',
+    };
+    const permission = permissionBySection[section];
+    if (
+      section !== 'terms' &&
+      permission &&
+      (!adminViewer || !adminViewer.permissions.includes(permission)) &&
+      section !== 'form'
+    ) {
+      setServerError('Бу бўлимни очиш учун рухсат йўқ.');
+      return;
+    }
     setActiveSection(section);
+    setMobileMenuOpen(false);
     const url = new URL(window.location.href);
     url.searchParams.set('section', section);
     window.history.replaceState({}, '', url);
   }
 
-  const canSelectAnyGroup = Boolean(adminViewer);
+  async function saveSettings(update: {
+    telegramGroupUrl?: string;
+    sources?: ListenerSources;
+  }) {
+    const response = await fetch('/api/admin/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(update),
+    });
+    const result = (await response.json()) as {
+      error?: string;
+      telegramGroupUrl?: string;
+      sources?: ListenerSources;
+    };
+    if (!response.ok) {
+      throw new Error(result.error || 'Sozlamani saqlab bo‘lmadi.');
+    }
+    if (result.telegramGroupUrl) setTelegramGroupUrl(result.telegramGroupUrl);
+    if (update.sources !== undefined && result.sources) {
+      setListenerSources(result.sources);
+    }
+    setServerError('');
+  }
+
+  async function saveRoleMembers(nextMembers: RoleMember[]) {
+    if (roleSavePending.current) return;
+    roleSavePending.current = true;
+    setRoleSaving(true);
+    const previous = roleMembers;
+    const protectedMembers = protectHeadAdmins(nextMembers);
+    setRoleMembers(protectedMembers);
+    try {
+      const response = await fetch('/api/admin/roles', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ members: protectedMembers }),
+      });
+      const result = (await response.json()) as {
+        error?: string;
+        members?: RoleMember[];
+      };
+      if (!response.ok || !result.members) {
+        throw new Error(result.error || 'Rollarni saqlab bo‘lmadi.');
+      }
+      setRoleMembers(protectHeadAdmins(result.members));
+      setServerError('');
+    } catch (error) {
+      setRoleMembers(previous);
+      setServerError(
+        error instanceof Error ? error.message : 'Rollarni saqlab bo‘lmadi.',
+      );
+    } finally {
+      roleSavePending.current = false;
+      setRoleSaving(false);
+    }
+  }
+
+  function handleAccountAction() {
+    if (!adminViewer) {
+      window.location.href = '/admin?section=listeners';
+      return;
+    }
+    void (async () => {
+      try {
+        const response = await fetch('/api/admin/logout', { method: 'POST' });
+        if (!response.ok) throw new Error();
+        setAdminViewer(null);
+        setAdminSessionError('');
+        setAdminSessionChecked(true);
+        setActiveSection('form');
+        setMobileMenuOpen(false);
+      } catch {
+        setServerError(
+          'Boshqaruv sessiyasidan chiqib bo‘lmadi. Internetni tekshiring.',
+        );
+      }
+    })();
+  }
+
+  const can = (permission: string) =>
+    Boolean(adminViewer?.permissions.includes(permission));
+  const canSelectAnyGroup = can('Tinglovchilar:Kiritish');
   const profileName = adminViewer?.name ?? 'Tinglovchi';
   const profileEmail = adminViewer?.email ?? 'Ommaviy ro‘yxatdan o‘tish';
-  const profileInitials = adminViewer
-    ? initialsFor(adminViewer.name)
-    : 'T';
+  const profileInitials = adminViewer ? initialsFor(adminViewer.name) : 'T';
+
+  useEffect(() => {
+    if (!routeReady || !adminSessionChecked || !adminViewer) return;
+    const requiredPermission: Partial<Record<SectionId, string>> = {
+      listeners: 'Tinglovchilar:Ko‘rish',
+      form: 'Tinglovchi formasi:Ko‘rish',
+      sources: 'Manbalar:Ko‘rish',
+      roles: 'Rollar va ruxsatlar:Ko‘rish',
+    };
+    const required = requiredPermission[activeSection];
+    if (!required || adminViewer.permissions.includes(required)) return;
+    const fallback = adminViewer.permissions.includes('Tinglovchilar:Ko‘rish')
+      ? 'listeners'
+      : 'form';
+    setActiveSection(fallback);
+    const url = new URL(window.location.href);
+    url.searchParams.set('section', fallback);
+    window.history.replaceState({}, '', url);
+  }, [activeSection, adminSessionChecked, adminViewer, routeReady]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [mobileMenuOpen]);
 
   if (!routeReady || (adminEntry && !adminSessionChecked)) {
     return <AdminLogin loading />;
@@ -894,7 +880,11 @@ export default function Home() {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar" aria-label="Asosiy navigatsiya">
+      <aside
+        id="mtv-primary-navigation"
+        className={`sidebar ${mobileMenuOpen ? 'mobile-open' : ''}`}
+        aria-label="Asosiy navigatsiya"
+      >
         <div className="brand-block">
           <div className="crest brand-emblem" aria-hidden="true">
             <img src="/imv-oquv-markazi.png" alt="" />
@@ -905,30 +895,32 @@ export default function Home() {
           </div>
         </div>
         <nav className="side-nav" aria-label="Bo‘limlar">
-          <div className="staff-nav listener-nav">
-            <button
-              className={
-                listenerMenuOpen || activeSection === 'listeners'
-                  ? 'nav-item active'
-                  : 'nav-item'
-              }
-              onClick={() => setListenerMenuOpen((current) => !current)}
-              aria-expanded={listenerMenuOpen}
-            >
-              <span className="nav-dot" aria-hidden="true" />
-              TINGLOVCHILAR<b>{listenerMenuOpen ? '−' : '+'}</b>
-            </button>
-            {listenerMenuOpen && (
-              <div className="staff-subnav">
-                <button
-                  className={activeSection === 'listeners' ? 'selected' : ''}
-                  onClick={() => openSection('listeners')}
-                >
-                  Tinglovchilar
-                </button>
-              </div>
-            )}
-          </div>
+          {can('Tinglovchilar:Ko‘rish') && (
+            <div className="staff-nav listener-nav">
+              <button
+                className={
+                  listenerMenuOpen || activeSection === 'listeners'
+                    ? 'nav-item active'
+                    : 'nav-item'
+                }
+                onClick={() => setListenerMenuOpen((current) => !current)}
+                aria-expanded={listenerMenuOpen}
+              >
+                <span className="nav-dot" aria-hidden="true" />
+                TINGLOVCHILAR<b>{listenerMenuOpen ? '−' : '+'}</b>
+              </button>
+              {listenerMenuOpen && (
+                <div className="staff-subnav">
+                  <button
+                    className={activeSection === 'listeners' ? 'selected' : ''}
+                    onClick={() => openSection('listeners')}
+                  >
+                    Tinglovchilar
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <button
             className={
               activeSection === 'form' ? 'nav-item active' : 'nav-item'
@@ -947,103 +939,107 @@ export default function Home() {
             <span className="nav-dot" aria-hidden="true" />
             SHARTLAR
           </button>
-          <div className="staff-nav access-nav">
-            <button
-              className={
-                accessMenuOpen || activeSection === 'roles'
-                  ? 'nav-item active'
-                  : 'nav-item'
-              }
-              onClick={() => setAccessMenuOpen((current) => !current)}
-              aria-expanded={accessMenuOpen}
-            >
-              <span className="nav-dot" aria-hidden="true" />
-              RUXSAT VA ROLL<b>{accessMenuOpen ? '−' : '+'}</b>
-            </button>
-            {accessMenuOpen && (
-              <div className="staff-subnav access-subnav">
-                <button
-                  className={activeSection === 'roles' ? 'selected' : ''}
-                  onClick={() => openSection('roles')}
-                >
-                  Rollar
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="staff-nav source-nav">
-            <button
-              className={
-                sourceMenuOpen || activeSection === 'sources'
-                  ? 'nav-item active'
-                  : 'nav-item'
-              }
-              onClick={() => setSourceMenuOpen((current) => !current)}
-              aria-expanded={sourceMenuOpen}
-            >
-              <span className="nav-dot" aria-hidden="true" />
-              MANBALAR<b>{sourceMenuOpen ? '−' : '+'}</b>
-            </button>
-            {sourceMenuOpen && (
-              <div className="staff-subnav source-subnav">
-                <button
-                  className={activeSection === 'sources' ? 'selected' : ''}
-                  onClick={() => openSection('sources')}
-                >
-                  Tingmanba
-                </button>
-                <button onClick={() => openSection('sources')}>
-                  Hudud, tuman-shahar
-                </button>
-                <button onClick={() => openSection('sources')}>
-                  Kategoriya, guruh
-                </button>
-                <button onClick={() => openSection('sources')}>
-                  Vazirlik va idoralar
-                </button>
-              </div>
-            )}
-          </div>
+          {can('Rollar va ruxsatlar:Ko‘rish') && (
+            <div className="staff-nav access-nav">
+              <button
+                className={
+                  accessMenuOpen || activeSection === 'roles'
+                    ? 'nav-item active'
+                    : 'nav-item'
+                }
+                onClick={() => setAccessMenuOpen((current) => !current)}
+                aria-expanded={accessMenuOpen}
+              >
+                <span className="nav-dot" aria-hidden="true" />
+                RUXSAT VA ROLL<b>{accessMenuOpen ? '−' : '+'}</b>
+              </button>
+              {accessMenuOpen && (
+                <div className="staff-subnav access-subnav">
+                  <button
+                    className={activeSection === 'roles' ? 'selected' : ''}
+                    onClick={() => openSection('roles')}
+                  >
+                    Rollar
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {can('Manbalar:Ko‘rish') && (
+            <div className="staff-nav source-nav">
+              <button
+                className={
+                  sourceMenuOpen || activeSection === 'sources'
+                    ? 'nav-item active'
+                    : 'nav-item'
+                }
+                onClick={() => setSourceMenuOpen((current) => !current)}
+                aria-expanded={sourceMenuOpen}
+              >
+                <span className="nav-dot" aria-hidden="true" />
+                MANBALAR<b>{sourceMenuOpen ? '−' : '+'}</b>
+              </button>
+              {sourceMenuOpen && (
+                <div className="staff-subnav source-subnav">
+                  <button
+                    className={activeSection === 'sources' ? 'selected' : ''}
+                    onClick={() => openSection('sources')}
+                  >
+                    Tingmanba
+                  </button>
+                  <button onClick={() => openSection('sources')}>
+                    Hudud, tuman-shahar
+                  </button>
+                  <button onClick={() => openSection('sources')}>
+                    Kategoriya, guruh
+                  </button>
+                  <button onClick={() => openSection('sources')}>
+                    Vazirlik va idoralar
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </nav>
         <div className="profile-mini">
           <div className="avatar">{profileInitials}</div>
           <div>
             <strong>{profileName}</strong>
             <span>{profileEmail}</span>
-            <small>{adminViewer ? 'Bosh admin' : 'Tinglovchi'}</small>
+            <small>{adminViewer?.role ?? 'Tinglovchi'}</small>
           </div>
           <button
-            aria-label={adminViewer ? 'Bosh admin sessiyasidan chiqish' : 'Akkaunt'}
+            aria-label={
+              adminViewer ? 'Bosh admin sessiyasidan chiqish' : 'Akkaunt'
+            }
             title={adminViewer ? 'Chiqish' : 'Akkaunt'}
-            onClick={() => {
-              if (!adminViewer) {
-                window.location.href = '/admin?section=listeners';
-                return;
-              }
-              void (async () => {
-                try {
-                  const response = await fetch('/api/admin/logout', {
-                    method: 'POST',
-                  });
-                  if (!response.ok) throw new Error();
-                  setAdminViewer(null);
-                  setAdminSessionError('');
-                  setAdminSessionChecked(true);
-                } catch {
-                  setServerError(
-                    'Bosh admin sessiyasidan chiqib bo‘lmadi. Internetni tekshiring.',
-                  );
-                }
-              })();
-            }}
+            onClick={handleAccountAction}
           >
             {adminViewer ? '↪' : '•••'}
           </button>
         </div>
       </aside>
+      {mobileMenuOpen && (
+        <button
+          className="mobile-sidebar-backdrop"
+          type="button"
+          aria-label="Menyuni yopish"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
 
       <section className="workspace">
         <header className="topbar">
+          <button
+            className="mobile-menu-button"
+            type="button"
+            aria-label={mobileMenuOpen ? 'Menyuni yopish' : 'Menyuni ochish'}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mtv-primary-navigation"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+          >
+            ☰
+          </button>
           <div className="mobile-brand">
             <span className="crest">
               <img src="/imv-oquv-markazi.png" alt="" />
@@ -1060,7 +1056,18 @@ export default function Home() {
               ♟<i />
             </button>
             <button className="lang-button">O‘Z</button>
-            <div className="top-avatar">{profileInitials}</div>
+            <button
+              className="top-avatar"
+              type="button"
+              aria-label={
+                adminViewer
+                  ? 'Boshqaruv sessiyasidan chiqish'
+                  : 'Boshqaruvga kirish'
+              }
+              onClick={handleAccountAction}
+            >
+              {profileInitials}
+            </button>
           </div>
         </header>
         <div className="content">
@@ -1074,10 +1081,13 @@ export default function Home() {
                 : `Ma’lumotlar bazasi: ${serverError}`}
             </div>
           )}
-          {activeSection === 'listeners' && (
+          {activeSection === 'listeners' && can('Tinglovchilar:Ko‘rish') && (
             <ListenersPanel
               rows={listeners}
-              canManageListeners={canSelectAnyGroup}
+              groups={listenerSources.groups}
+              canCreate={can('Tinglovchilar:Kiritish')}
+              canEdit={can('Tinglovchilar:Tahrirlash')}
+              canDelete={can('Tinglovchilar:O‘chirish')}
               onOpenForm={() => {
                 setAdminEditingListener(null);
                 openSection('form');
@@ -1093,14 +1103,19 @@ export default function Home() {
                 );
                 const result = (await response.json()) as { error?: string };
                 if (!response.ok) {
-                  throw new Error(result.error || 'Tinglovchini o‘chirib bo‘lmadi.');
+                  throw new Error(
+                    result.error || 'Tinglovchini o‘chirib bo‘lmadi.',
+                  );
                 }
                 setListeners((current) =>
                   current.filter((listener) => listener.id !== listenerId),
                 );
               }}
               telegramGroupUrl={telegramGroupUrl}
-              onTelegramGroupUrlChange={setTelegramGroupUrl}
+              canEditTelegram={can('Manbalar:Tahrirlash')}
+              onTelegramGroupUrlChange={async (value) => {
+                await saveSettings({ telegramGroupUrl: value });
+              }}
             />
           )}
           {activeSection === 'form' && (
@@ -1111,6 +1126,8 @@ export default function Home() {
               ownerListenerId={deviceListenerId}
               deviceBindingVerified={deviceBindingVerified}
               canSelectAnyGroup={canSelectAnyGroup}
+              availableGroups={listenerSources.groups}
+              districtOptions={listenerSources.districtsByRegion}
               initialEditingRecord={adminEditingListener}
               onCancel={() => {
                 setAdminEditingListener(null);
@@ -1158,9 +1175,31 @@ export default function Home() {
           {activeSection === 'terms' && (
             <TermsPanel onOpenForm={() => openSection('form')} />
           )}
-          {activeSection === 'sources' && <SourcesPanel />}
-          {activeSection === 'roles' && (
-            <RolesPanel members={roleMembers} onMembersChange={setRoleMembers} />
+          {activeSection === 'sources' && can('Manbalar:Ko‘rish') && (
+            <SourcesPanel
+              sources={listenerSources}
+              canEdit={can('Manbalar:Tahrirlash')}
+              onSourcesChange={async (sources) => {
+                await saveSettings({ sources });
+              }}
+            />
+          )}
+          {activeSection === 'roles' && can('Rollar va ruxsatlar:Ko‘rish') && (
+            <RolesPanel
+              members={roleMembers}
+              canEdit={can('Rollar va ruxsatlar:Tahrirlash')}
+              canRestore={
+                can('Tinglovchilar:Ko‘rish') && can('Tinglovchilar:O‘chirish')
+              }
+              saving={roleSaving}
+              onMembersChange={saveRoleMembers}
+              onListenerRestored={(listener) =>
+                setListeners((current) => [
+                  ...current.filter((item) => item.id !== listener.id),
+                  listener,
+                ])
+              }
+            />
           )}
         </div>
       </section>
@@ -1170,20 +1209,28 @@ export default function Home() {
 
 function ListenersPanel({
   rows,
-  canManageListeners,
+  groups,
+  canCreate,
+  canEdit,
+  canDelete,
   onOpenForm,
   onEdit,
   onDelete,
   telegramGroupUrl,
+  canEditTelegram,
   onTelegramGroupUrlChange,
 }: {
   rows: ListenerRecord[];
-  canManageListeners: boolean;
+  groups: string[];
+  canCreate: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
   onOpenForm: () => void;
   onEdit: (listener: ListenerRecord) => void;
   onDelete: (listenerId: string) => Promise<void>;
   telegramGroupUrl: string;
-  onTelegramGroupUrlChange: (value: string) => void;
+  canEditTelegram: boolean;
+  onTelegramGroupUrlChange: (value: string) => Promise<void>;
 }) {
   const [query, setQuery] = useState('');
   const [workplaceQuery, setWorkplaceQuery] = useState('');
@@ -1195,9 +1242,16 @@ function ListenersPanel({
   const [telegramUrl, setTelegramUrl] = useState(telegramGroupUrl);
   const [telegramEditing, setTelegramEditing] = useState(false);
   const [month, setMonth] = useState('all');
+  const [year, setYear] = useState('all');
+  const [category, setCategory] = useState('all');
+  const [photoFilter, setPhotoFilter] = useState('all');
+  const [position, setPosition] = useState('all');
+  const [ageRange, setAgeRange] = useState('all');
   const [copied, setCopied] = useState('');
   const [deletingId, setDeletingId] = useState('');
+  const [savingTelegram, setSavingTelegram] = useState(false);
   const [actionError, setActionError] = useState('');
+  const canManageListeners = canEdit || canDelete;
 
   const registrationUrl = 'https://mtv.etalimai.uz/?section=form';
   const validTelegramUrl = /^https:\/\/(?:t\.me|telegram\.me)\/.+/i.test(
@@ -1226,21 +1280,39 @@ function ListenersPanel({
           !dateFilter || row.date === dateFilter.split('-').reverse().join('.');
         const matchesMonth =
           month === 'all' || row.startDate.slice(5, 7) === month;
+        const matchesYear = year === 'all' || row.year === year;
+        const matchesCategory = category === 'all' || row.category === category;
+        const matchesPhoto =
+          photoFilter === 'all' ||
+          (photoFilter === 'with' ? Boolean(row.photo) : !row.photo);
         const matchesGroup = group === 'all' || row.group === group;
         const matchesRegion = region === 'all' || row.region === region;
         const matchesDistrict = district === 'all' || row.district === district;
         const matchesPhone =
           !phone ||
           row.phone.replace(/\s/g, '').includes(phone.replace(/\s/g, ''));
+        const matchesPosition = position === 'all' || row.position === position;
+        const matchesAge =
+          ageRange === 'all' ||
+          (row.age !== null &&
+            ((ageRange === 'under30' && row.age < 30) ||
+              (ageRange === '30-39' && row.age >= 30 && row.age <= 39) ||
+              (ageRange === '40-49' && row.age >= 40 && row.age <= 49) ||
+              (ageRange === '50plus' && row.age >= 50)));
         return (
           matchesQuery &&
           matchesWorkplace &&
           matchesDate &&
           matchesMonth &&
+          matchesYear &&
+          matchesCategory &&
+          matchesPhoto &&
           matchesGroup &&
           matchesRegion &&
           matchesDistrict &&
-          matchesPhone
+          matchesPhone &&
+          matchesPosition &&
+          matchesAge
         );
       }),
     [
@@ -1248,21 +1320,31 @@ function ListenersPanel({
       workplaceQuery,
       dateFilter,
       month,
+      year,
+      category,
+      photoFilter,
       group,
       region,
       district,
       phone,
+      position,
+      ageRange,
       rows,
     ],
   );
 
   function exportToWord() {
-    const escapeHtml = (value: unknown) =>
-      String(value ?? '')
+    const escapeHtml = (value: unknown) => {
+      const plain =
+        typeof value === 'string' || typeof value === 'number'
+          ? String(value)
+          : '';
+      return plain
         .replaceAll('&', '&amp;')
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;');
+    };
     const bodyRows = filteredRows
       .map(
         (row, index) => `<tr>
@@ -1294,7 +1376,7 @@ function ListenersPanel({
   async function deleteListener(row: ListenerRecord) {
     if (
       !window.confirm(
-        `${row.name} маълумотини ўчиришни тасдиқлайсизми? Бу амални қайтариб бўлмайди.`,
+        `${row.name} маълумотини архивга ўтказишни тасдиқлайсизми? Уни кейин тиклаш мумкин.`,
       )
     )
       return;
@@ -1304,7 +1386,9 @@ function ListenersPanel({
       await onDelete(row.id);
     } catch (error) {
       setActionError(
-        error instanceof Error ? error.message : 'Tinglovchini o‘chirib bo‘lmadi.',
+        error instanceof Error
+          ? error.message
+          : 'Tinglovchini o‘chirib bo‘lmadi.',
       );
     } finally {
       setDeletingId('');
@@ -1319,14 +1403,19 @@ function ListenersPanel({
         .map((row) => row.district),
     ),
   ];
+  const years = [...new Set(rows.map((row) => row.year).filter(Boolean))];
+  const categories = [
+    ...new Set(rows.map((row) => row.category).filter(Boolean)),
+  ];
+  const positions = [
+    ...new Set(
+      rows.map((row) => row.position).filter((value) => value && value !== '—'),
+    ),
+  ];
 
   return (
     <section className="ting-page">
-      {copied && (
-        <div className="notice" role="status">
-          ✓ {copied} nusxalandi
-        </div>
-      )}
+      {copied && <output className="notice">✓ {copied} nusxalandi</output>}
       {actionError && (
         <div className="notice error" role="alert">
           ! {actionError}
@@ -1335,7 +1424,7 @@ function ListenersPanel({
       <header className="ting-hero ting-hero-unified has-admin-links listener-toolbar-only">
         <div className="listener-admin-links">
           <article className="listener-quick-link registration">
-            <a
+            <Link
               className="listener-registration-open"
               href="?section=form"
               onClick={(event) => {
@@ -1349,10 +1438,11 @@ function ListenersPanel({
                 <code>mtv.etalimai.uz/?section=form</code>
               </span>
               <i>→</i>
-            </a>
+            </Link>
             <button
               className="listener-registration-copy"
               type="button"
+              aria-label="Forma havolasini nusxalash"
               onClick={() => void copyValue(registrationUrl, 'Forma havolasi')}
               title="Nusxalash"
             >
@@ -1373,6 +1463,7 @@ function ListenersPanel({
                 <button
                   className="listener-copy-icon-button"
                   type="button"
+                  aria-label="Telegram havolasini nusxalash"
                   onClick={() =>
                     void copyValue(telegramGroupUrl, 'Telegram havolasi')
                   }
@@ -1382,8 +1473,11 @@ function ListenersPanel({
                     <path d="M16 17v2a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h1" />
                   </svg>
                 </button>
-                {canManageListeners && (
-                  <button type="button" onClick={() => setTelegramEditing(true)}>
+                {canEditTelegram && (
+                  <button
+                    type="button"
+                    onClick={() => setTelegramEditing(true)}
+                  >
                     ✎ TAHRIRLASH
                   </button>
                 )}
@@ -1394,9 +1488,19 @@ function ListenersPanel({
               className="listener-quick-link telegram editing"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (!validTelegramUrl) return;
-                onTelegramGroupUrlChange(telegramUrl.trim());
-                setTelegramEditing(false);
+                if (!validTelegramUrl || savingTelegram) return;
+                setSavingTelegram(true);
+                setActionError('');
+                void onTelegramGroupUrlChange(telegramUrl.trim())
+                  .then(() => setTelegramEditing(false))
+                  .catch((error: unknown) => {
+                    setActionError(
+                      error instanceof Error
+                        ? error.message
+                        : 'Telegram havolasini saqlab bo‘lmadi.',
+                    );
+                  })
+                  .finally(() => setSavingTelegram(false));
               }}
             >
               <div className="listener-telegram-icon">➤</div>
@@ -1420,15 +1524,26 @@ function ListenersPanel({
                 >
                   BEKOR
                 </button>
-                <button className="telegram-save" type="submit">
-                  SAQLASH
+                <button
+                  className="telegram-save"
+                  type="submit"
+                  disabled={savingTelegram}
+                >
+                  {savingTelegram ? 'SAQLANMOQDA…' : 'SAQLASH'}
                 </button>
               </div>
             </form>
           )}
           <label className="listener-year-control">
-            <select aria-label="Yil" defaultValue="2026">
-              <option>2026</option>
+            <select
+              aria-label="Yil"
+              value={year}
+              onChange={(event) => setYear(event.target.value)}
+            >
+              <option value="all">Barcha yillar</option>
+              {years.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
             </select>
           </label>
           <label className="listener-filter-control listener-month-control">
@@ -1444,12 +1559,17 @@ function ListenersPanel({
           </label>
           <label className="listener-filter-control listener-category-control">
             <span>KATEGORIYA</span>
-            <select defaultValue="all">
+            <select
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+            >
               <option value="all">Barchasi</option>
-              <option>Nomzod direktor</option>
+              {categories.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
             </select>
           </label>
-          {canManageListeners && (
+          {canCreate && (
             <button
               className="listener-admin-create"
               type="button"
@@ -1467,6 +1587,27 @@ function ListenersPanel({
           >
             <b>W</b>
             <span>WORD</span>
+          </button>
+          <button
+            className="listener-filter-reset"
+            type="button"
+            onClick={() => {
+              setQuery('');
+              setWorkplaceQuery('');
+              setDateFilter('');
+              setMonth('all');
+              setYear('all');
+              setCategory('all');
+              setPhotoFilter('all');
+              setGroup('all');
+              setRegion('all');
+              setDistrict('all');
+              setPhone('');
+              setPosition('all');
+              setAgeRange('all');
+            }}
+          >
+            TOZALASH
           </button>
         </div>
       </header>
@@ -1508,30 +1649,37 @@ function ListenersPanel({
                   <th>
                     <input
                       type="date"
+                      aria-label="Boshlanish sanasi bo‘yicha filtrlash"
                       value={dateFilter}
                       onChange={(event) => setDateFilter(event.target.value)}
                     />
                   </th>
                   <th>
                     <select
+                      aria-label="Guruh bo‘yicha filtrlash"
                       value={group}
                       onChange={(event) => setGroup(event.target.value)}
                     >
                       <option value="all">Barchasi</option>
-                      {candidateGroups.map((item) => (
+                      {groups.map((item) => (
                         <option key={item}>{item}</option>
                       ))}
                     </select>
                   </th>
                   <th>
-                    <select>
-                      <option>Barchasi</option>
-                      <option>Rasm bor</option>
-                      <option>Rasm yo‘q</option>
+                    <select
+                      aria-label="Rasm bo‘yicha filtrlash"
+                      value={photoFilter}
+                      onChange={(event) => setPhotoFilter(event.target.value)}
+                    >
+                      <option value="all">Barchasi</option>
+                      <option value="with">Rasm bor</option>
+                      <option value="without">Rasm yo‘q</option>
                     </select>
                   </th>
                   <th>
                     <input
+                      aria-label="F.I.Sh. bo‘yicha qidirish"
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
                       placeholder="F.I.Sh.…"
@@ -1539,6 +1687,7 @@ function ListenersPanel({
                   </th>
                   <th>
                     <input
+                      aria-label="Ish joyi bo‘yicha qidirish"
                       value={workplaceQuery}
                       onChange={(event) =>
                         setWorkplaceQuery(event.target.value)
@@ -1548,6 +1697,7 @@ function ListenersPanel({
                   </th>
                   <th>
                     <select
+                      aria-label="Hudud bo‘yicha filtrlash"
                       value={region}
                       onChange={(event) => {
                         setRegion(event.target.value);
@@ -1562,6 +1712,7 @@ function ListenersPanel({
                   </th>
                   <th>
                     <select
+                      aria-label="Tuman-shahar bo‘yicha filtrlash"
                       value={district}
                       onChange={(event) => setDistrict(event.target.value)}
                     >
@@ -1573,19 +1724,35 @@ function ListenersPanel({
                   </th>
                   <th>
                     <input
+                      aria-label="Telefon bo‘yicha qidirish"
                       value={phone}
                       onChange={(event) => setPhone(event.target.value)}
                       placeholder="Telefon…"
                     />
                   </th>
                   <th>
-                    <select>
-                      <option>Barchasi</option>
+                    <select
+                      aria-label="Lavozim bo‘yicha filtrlash"
+                      value={position}
+                      onChange={(event) => setPosition(event.target.value)}
+                    >
+                      <option value="all">Barchasi</option>
+                      {positions.map((item) => (
+                        <option key={item}>{item}</option>
+                      ))}
                     </select>
                   </th>
                   <th>
-                    <select>
-                      <option>Barchasi</option>
+                    <select
+                      aria-label="Yosh bo‘yicha filtrlash"
+                      value={ageRange}
+                      onChange={(event) => setAgeRange(event.target.value)}
+                    >
+                      <option value="all">Barchasi</option>
+                      <option value="under30">30 yoshgacha</option>
+                      <option value="30-39">30–39</option>
+                      <option value="40-49">40–49</option>
+                      <option value="50plus">50 ва ундан катта</option>
                     </select>
                   </th>
                   {canManageListeners && <th>—</th>}
@@ -1602,7 +1769,7 @@ function ListenersPanel({
                     <td className="listener-photo">
                       <span className="listener-photo-frame">
                         {row.photo ? (
-                          <img src={row.photo} alt="" />
+                          <img src={row.photo} alt={`${row.name} rasmi`} />
                         ) : (
                           <span>{row.initials}</span>
                         )}
@@ -1623,17 +1790,21 @@ function ListenersPanel({
                     <td className="listener-age">{row.age ?? '—'}</td>
                     {canManageListeners && (
                       <td className="listener-admin-actions">
-                        <button type="button" onClick={() => onEdit(row)}>
-                          TAHRIRLASH
-                        </button>
-                        <button
-                          className="danger"
-                          type="button"
-                          disabled={deletingId === row.id}
-                          onClick={() => void deleteListener(row)}
-                        >
-                          {deletingId === row.id ? '…' : 'O‘CHIRISH'}
-                        </button>
+                        {canEdit && (
+                          <button type="button" onClick={() => onEdit(row)}>
+                            TAHRIRLASH
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button
+                            className="danger"
+                            type="button"
+                            disabled={deletingId === row.id}
+                            onClick={() => void deleteListener(row)}
+                          >
+                            {deletingId === row.id ? '…' : 'O‘CHIRISH'}
+                          </button>
+                        )}
                       </td>
                     )}
                   </tr>
@@ -1660,7 +1831,8 @@ function ListenersPanel({
 function fileDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onload = () =>
+      resolve(typeof reader.result === 'string' ? reader.result : '');
     reader.onerror = () => reject(new Error('Faylni o‘qib bo‘lmadi.'));
     reader.readAsDataURL(file);
   });
@@ -1698,9 +1870,9 @@ function groupPreviewTitle(
     metadataCounts.set(key, (metadataCounts.get(key) ?? 0) + 1);
   }
   const [storedYear = '', storedMonth = ''] =
-    [...metadataCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0].split(
-      '|',
-    ) ?? [];
+    [...metadataCounts.entries()]
+      .sort((a, b) => b[1] - a[1])[0]?.[0]
+      .split('|') ?? [];
   const year = storedYear || fallbackYear || fallbackStartDate.slice(0, 4);
   const monthNumber = Number(
     storedMonth || /^\d{4}-(\d{2})/.exec(fallbackStartDate)?.[1] || 0,
@@ -1723,6 +1895,8 @@ function ListenerForm({
   ownerListenerId,
   deviceBindingVerified,
   canSelectAnyGroup,
+  availableGroups,
+  districtOptions,
   initialEditingRecord,
   onSave,
   onCancel,
@@ -1733,6 +1907,8 @@ function ListenerForm({
   ownerListenerId: string;
   deviceBindingVerified: boolean;
   canSelectAnyGroup: boolean;
+  availableGroups: string[];
+  districtOptions: Record<string, string[]>;
   initialEditingRecord: ListenerRecord | null;
   onSave: (
     listener: ListenerDraft,
@@ -1764,6 +1940,14 @@ function ListenerForm({
   );
   const [lookingUpGroup, setLookingUpGroup] = useState(false);
   const [groupPreviewOpen, setGroupPreviewOpen] = useState(false);
+  const [previewRows, setPreviewRows] = useState<ListenerRecord[]>([]);
+  const [previewCohort, setPreviewCohort] = useState<{
+    group: string;
+    year: string;
+    month: string;
+  } | null>(null);
+  const [previewOwnerListenerId, setPreviewOwnerListenerId] =
+    useState(ownerListenerId);
   const [cardsOnly, setCardsOnly] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(
     initialEditingRecord?.photo || '',
@@ -1785,20 +1969,26 @@ function ListenerForm({
       ),
     [deviceBindingVerified, ownerListenerId, rows, phoneDigits],
   );
-  const detectedGroup = matchedListener?.group || selectedGroup;
-  const detectedGroupRows = useMemo(
-    () => rows.filter((row) => row.group === detectedGroup),
-    [rows, detectedGroup],
-  );
+  const detectedGroup =
+    previewCohort?.group || matchedListener?.group || selectedGroup;
+  const detectedGroupRows = previewRows;
   const detectedGroupTitle = useMemo(
     () =>
       groupPreviewTitle(
         detectedGroup,
         detectedGroupRows,
-        selectedYear,
-        selectedStartDate,
+        previewCohort?.year || selectedYear,
+        previewCohort
+          ? `${previewCohort.year}-${previewCohort.month}-01`
+          : selectedStartDate,
       ),
-    [detectedGroup, detectedGroupRows, selectedStartDate, selectedYear],
+    [
+      detectedGroup,
+      detectedGroupRows,
+      previewCohort,
+      selectedStartDate,
+      selectedYear,
+    ],
   );
   const groupIsLocked =
     !canSelectAnyGroup && Boolean(editingRecord || lockedGroup);
@@ -1809,47 +1999,63 @@ function ListenerForm({
     }
   }, [canSelectAnyGroup, editingRecord, lockedGroup]);
 
-  async function openGroupPreview() {
-    let previewGroup = detectedGroup;
-    if (!previewGroup && phoneDigits.length === 9) {
-      setLookingUpGroup(true);
-      try {
-        const response = await fetch('/api/listeners/lookup', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ phone: phoneDigits }),
-        });
-        const result = (await response.json()) as {
-          found?: boolean;
-          group?: string;
-          error?: string;
-        };
-        if (!response.ok) throw new Error(result.error || 'Guruh aniqlanmadi.');
-        if (result.found && result.group) {
-          previewGroup = result.group;
-          setSelectedGroup(result.group);
-        }
-      } catch (lookupError) {
-        setError(
-          lookupError instanceof Error
-            ? lookupError.message
-            : 'Guruhni aniqlab bo‘lmadi.',
-        );
-        return;
-      } finally {
-        setLookingUpGroup(false);
+  useEffect(() => {
+    if (ownerListenerId) setPreviewOwnerListenerId(ownerListenerId);
+  }, [ownerListenerId]);
+
+  async function loadGroupPreview(record?: ListenerRecord) {
+    const previewGroup = record?.group || selectedGroup || lockedGroup;
+    const previewStartDate = record?.startDate || selectedStartDate;
+    const previewYear =
+      record?.year || selectedYear || previewStartDate.slice(0, 4);
+    setLookingUpGroup(true);
+    try {
+      const response = await fetch('/api/listeners/lookup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          phone: canSelectAnyGroup ? '' : phoneDigits,
+          group: previewGroup,
+          year: previewYear,
+          startDate: previewStartDate,
+        }),
+      });
+      const result = (await response.json()) as {
+        found?: boolean;
+        group?: string;
+        cohort?: { group: string; year: string; month: string };
+        listeners?: ListenerRecord[];
+        ownerListenerId?: string;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(result.error || 'Guruh aniqlanmadi.');
+      if (!result.found || !result.cohort) {
+        throw new Error('Ushbu qurilmaga biriktirilgan guruh topilmadi.');
       }
-    }
-    if (!previewGroup) {
+      setPreviewRows(Array.isArray(result.listeners) ? result.listeners : []);
+      setPreviewCohort(result.cohort);
+      setPreviewOwnerListenerId(result.ownerListenerId || record?.id || '');
+      setSelectedGroup(result.cohort.group);
+      setSelectedYear(result.cohort.year);
+      setError('');
+      return true;
+    } catch (lookupError) {
+      setPreviewRows([]);
+      setPreviewCohort(null);
       setError(
-        'Avval guruhni tanlang yoki avval ro‘yxatdan o‘tgan telefon raqamini kiriting.',
+        lookupError instanceof Error
+          ? lookupError.message
+          : 'Guruhni aniqlab bo‘lmadi.',
       );
-      return;
+      return false;
+    } finally {
+      setLookingUpGroup(false);
     }
-    setError('');
-    // “Ko‘rish” is a dedicated group-card view.  Keeping the registration
-    // fields on screen made the result look like an unfinished form,
-    // especially on a phone.
+  }
+
+  async function openGroupPreview() {
+    const opened = await loadGroupPreview();
+    if (!opened) return;
     setCardsOnly(true);
     setSubmitted(false);
     setGroupPreviewOpen(true);
@@ -1889,7 +2095,7 @@ function ListenerForm({
     setError('');
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: SyntheticEvent<HTMLFormElement, SubmitEvent>) {
     event.preventDefault();
     if (saving) return;
     const form = event.currentTarget;
@@ -1900,12 +2106,12 @@ function ListenerForm({
       return;
     }
     const data = new FormData(form);
-    const surname = String(data.get('surname') ?? '').trim();
-    const firstName = String(data.get('firstName') ?? '').trim();
-    const patronymic = String(data.get('patronymic') ?? '').trim();
-    const startDate = String(data.get('startDate') ?? '');
-    const birthDate = String(data.get('birthDate') ?? '');
-    const cleanPhone = String(data.get('phone') ?? '').replace(/\D/g, '');
+    const surname = formText(data, 'surname');
+    const firstName = formText(data, 'firstName');
+    const patronymic = formText(data, 'patronymic');
+    const startDate = formText(data, 'startDate');
+    const birthDate = formText(data, 'birthDate');
+    const cleanPhone = formText(data, 'phone').replace(/\D/g, '');
     const readFile = (name: string) => {
       const file = data.get(name);
       return file instanceof File && file.size ? file : undefined;
@@ -1924,13 +2130,13 @@ function ListenerForm({
       : null;
     const formatDate = (value: string) =>
       value ? value.split('-').reverse().join('.') : '—';
-    const workplace = String(data.get('workplace') ?? '').trim();
+    const workplace = formText(data, 'workplace');
     const draft: ListenerDraft = {
       date: formatDate(startDate),
       startDate,
-      year: String(data.get('year') ?? '2026'),
-      category: String(data.get('category') ?? ''),
-      group: String(data.get('group') ?? ''),
+      year: formText(data, 'year') || '2026',
+      category: formText(data, 'category'),
+      group: formText(data, 'group'),
       initials: `${surname[0] ?? ''}${firstName[0] ?? ''}`.toUpperCase(),
       surname,
       firstName,
@@ -1938,12 +2144,12 @@ function ListenerForm({
       name: [surname, firstName, patronymic].filter(Boolean).join(' '),
       organization: workplace,
       workplace,
-      region: String(data.get('region') ?? ''),
-      district: String(data.get('district') ?? ''),
+      region: formText(data, 'region'),
+      district: formText(data, 'district'),
       phone: `+998 ${cleanPhone.slice(0, 2)} ${cleanPhone.slice(2, 5)} ${cleanPhone.slice(5, 7)} ${cleanPhone.slice(7, 9)}`,
-      position: String(data.get('position') ?? '').trim() || '—',
+      position: formText(data, 'position') || '—',
       birthDate,
-      note: String(data.get('note') ?? '').trim(),
+      note: formText(data, 'note'),
       age,
       role: 'Тингловчи',
       photo: editingRecord?.photo || '',
@@ -1954,12 +2160,13 @@ function ListenerForm({
     setSaving(true);
     setError('');
     try {
-      await onSave(draft, files, editingRecord?.id);
+      const savedRecord = await onSave(draft, files, editingRecord?.id);
       setEditingRecord(null);
       setPhotoPreview('');
       setSubmitted(true);
-      setGroupPreviewOpen(true);
-      setCardsOnly(true);
+      const previewLoaded = await loadGroupPreview(savedRecord);
+      setGroupPreviewOpen(previewLoaded);
+      setCardsOnly(previewLoaded);
       window.requestAnimationFrame(() =>
         document
           .querySelector('.ting-form-body')
@@ -2094,8 +2301,7 @@ function ListenerForm({
                 <div className="form-group-members listener-card-list">
                   {detectedGroupRows.map((row) => {
                     const progress = listenerProgress(row);
-                    const isMe =
-                      deviceBindingVerified && ownerListenerId === row.id;
+                    const isMe = previewOwnerListenerId === row.id;
                     return (
                       <article
                         className={`listener-member-card ${progress.complete ? 'complete' : 'incomplete'} ${isMe ? 'is-me' : ''}`}
@@ -2146,12 +2352,22 @@ function ListenerForm({
                               {row.district ? `, ${row.district}` : ''}
                             </div>
                             <div className="listener-member-phone">
-                              <a href={`tel:${row.phone.replace(/\s/g, '')}`}>
-                                📞
-                              </a>
-                              <a href={`tel:${row.phone.replace(/\s/g, '')}`}>
-                                {row.phone}
-                              </a>
+                              {row.phone.includes('*') ? (
+                                <span>📞 {row.phone}</span>
+                              ) : (
+                                <>
+                                  <a
+                                    href={`tel:${row.phone.replace(/\s/g, '')}`}
+                                  >
+                                    📞
+                                  </a>
+                                  <a
+                                    href={`tel:${row.phone.replace(/\s/g, '')}`}
+                                  >
+                                    {row.phone}
+                                  </a>
+                                </>
+                              )}
                             </div>
                             {row.position !== '—' && (
                               <div className="listener-member-position">
@@ -2182,8 +2398,7 @@ function ListenerForm({
                               To‘ldirilgan {progress.completed}/{progress.total}
                             </span>
                             {(canSelectAnyGroup ||
-                              (deviceBindingVerified &&
-                                ownerListenerId === row.id)) && (
+                              previewOwnerListenerId === row.id) && (
                               <button
                                 type="button"
                                 onClick={() => editRecord(row)}
@@ -2222,10 +2437,14 @@ function ListenerForm({
                     <input
                       name="startDate"
                       type="date"
+                      required
                       value={selectedStartDate}
-                      onChange={(event) =>
-                        setSelectedStartDate(event.target.value)
-                      }
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setSelectedStartDate(value);
+                        if (value) setSelectedYear(value.slice(0, 4));
+                        setGroupPreviewOpen(false);
+                      }}
                     />
                   </label>
                   <label>
@@ -2233,7 +2452,7 @@ function ListenerForm({
                     <input
                       name="year"
                       value={selectedYear}
-                      onChange={(event) => setSelectedYear(event.target.value)}
+                      readOnly
                       maxLength={4}
                     />
                   </label>
@@ -2265,13 +2484,14 @@ function ListenerForm({
                       }}
                     >
                       <option value="">Tanlang</option>
-                      {candidateGroups.map((item) => (
+                      {availableGroups.map((item) => (
                         <option key={item}>{item}</option>
                       ))}
                     </select>
                     {!canSelectAnyGroup && lockedGroup && !editingRecord && (
                       <small className="phone-group-found">
-                        🔒 Bu qurilma uchun guruh birinchi ro‘yxatdan o‘tishdan keyin biriktirilgan.
+                        🔒 Bu qurilma uchun guruh birinchi ro‘yxatdan o‘tishdan
+                        keyin biriktirilgan.
                       </small>
                     )}
                   </label>
@@ -2297,7 +2517,7 @@ function ListenerForm({
                       }}
                     >
                       <option value="">Tanlang</option>
-                      {Object.keys(districtsByRegion).map((region) => (
+                      {Object.keys(districtOptions).map((region) => (
                         <option key={region}>{region}</option>
                       ))}
                     </select>
@@ -2316,7 +2536,7 @@ function ListenerForm({
                       <option value="">
                         {selectedRegion ? 'Tanlang' : 'Avval hududni tanlang'}
                       </option>
-                      {(districtsByRegion[selectedRegion] || []).map(
+                      {(districtOptions[selectedRegion] || []).map(
                         (district) => (
                           <option key={district}>{district}</option>
                         ),
@@ -2382,6 +2602,7 @@ function ListenerForm({
                     <input
                       name="birthDate"
                       type="date"
+                      max={new Date().toISOString().slice(0, 10)}
                       defaultValue={editingRecord?.birthDate || ''}
                     />
                   </label>
@@ -2479,7 +2700,11 @@ function ListenerForm({
                   <label
                     className={`ting-file compact ${editingRecord?.passportFront ? 'has-file' : ''}`}
                   >
-                    <input name="passportFront" type="file" accept="image/*" />
+                    <input
+                      name="passportFront"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                    />
                     <span>＋</span>
                     <b>
                       {editingRecord?.passportFront
@@ -2490,7 +2715,11 @@ function ListenerForm({
                   <label
                     className={`ting-file compact ${editingRecord?.passportBack ? 'has-file' : ''}`}
                   >
-                    <input name="passportBack" type="file" accept="image/*" />
+                    <input
+                      name="passportBack"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                    />
                     <span>＋</span>
                     <b>
                       {editingRecord?.passportBack
@@ -2536,12 +2765,10 @@ function ListenerForm({
         )}
       </form>
       {zoomedRecord?.photo && (
-        <div
+        <dialog
+          open
           className="form-photo-lightbox"
-          role="dialog"
-          aria-modal="true"
           aria-label={`${zoomedRecord.name} rasmi`}
-          onClick={() => setZoomedRecord(null)}
         >
           <button
             type="button"
@@ -2550,11 +2777,11 @@ function ListenerForm({
           >
             ×
           </button>
-          <figure onClick={(event) => event.stopPropagation()}>
+          <figure>
             <img src={zoomedRecord.photo} alt={`${zoomedRecord.name} rasmi`} />
             <figcaption>{zoomedRecord.name}</figcaption>
           </figure>
-        </div>
+        </dialog>
       )}
     </section>
   );
@@ -2621,33 +2848,162 @@ function TermsPanel({ onOpenForm }: { onOpenForm: () => void }) {
   );
 }
 
-function SourcesPanel() {
+function SourcesPanel({
+  sources,
+  canEdit,
+  onSourcesChange,
+}: {
+  sources: ListenerSources;
+  canEdit: boolean;
+  onSourcesChange: (sources: ListenerSources) => Promise<void>;
+}) {
   const [entryOpen, setEntryOpen] = useState(false);
-  const [entries, setEntries] = useState<
-    Array<{ id: number; kind: string; value: string }>
-  >([]);
   const [sourceView, setSourceView] = useState<'locations' | 'groups'>(
     'groups',
   );
+  const [search, setSearch] = useState('');
+  const [savingSource, setSavingSource] = useState(false);
+  const [sourceError, setSourceError] = useState('');
 
-  function addEntry(event: FormEvent<HTMLFormElement>) {
+  async function addEntry(event: SyntheticEvent<HTMLFormElement, SubmitEvent>) {
     event.preventDefault();
+    if (!canEdit || savingSource) return;
     const form = event.currentTarget;
     const data = new FormData(form);
-    const kind = String(data.get('sourceKind') ?? '').trim();
-    const value = String(data.get('sourceValue') ?? '').trim();
-    if (!kind || !value) return;
-    setEntries((current) => [...current, { id: Date.now(), kind, value }]);
-    form.reset();
-    setEntryOpen(false);
+    const value = formText(data, 'sourceValue');
+    const region = formText(data, 'sourceRegion');
+    if (!value || (sourceView === 'locations' && !region)) return;
+    const next: ListenerSources =
+      sourceView === 'groups'
+        ? {
+            ...sources,
+            groups: [...new Set([...sources.groups, value])],
+          }
+        : {
+            ...sources,
+            districtsByRegion: {
+              ...sources.districtsByRegion,
+              [region]: [
+                ...new Set([
+                  ...(sources.districtsByRegion[region] || []),
+                  value,
+                ]),
+              ],
+            },
+          };
+    setSavingSource(true);
+    setSourceError('');
+    try {
+      await onSourcesChange(next);
+      form.reset();
+      setEntryOpen(false);
+    } catch (error) {
+      setSourceError(
+        error instanceof Error ? error.message : 'Manbani saqlab bo‘lmadi.',
+      );
+    } finally {
+      setSavingSource(false);
+    }
   }
 
-  const sourceItems =
+  const locationItems = Object.entries(sources.districtsByRegion).flatMap(
+    ([region, districts]) =>
+      districts.map((district) => ({
+        key: `${region}\u0000${district}`,
+        label: `${region} → ${district}`,
+        region,
+        district,
+      })),
+  );
+  const sourceItems = (
     sourceView === 'groups'
-      ? candidateGroups
-      : entries
-          .filter((entry) => entry.kind === 'Ҳудуд ва туман')
-          .map((entry) => entry.value);
+      ? sources.groups.map((group) => ({ key: group, label: group }))
+      : locationItems
+  ).filter((item) => item.label.toLowerCase().includes(search.toLowerCase()));
+
+  async function deleteSource(item: { key: string; label: string }) {
+    if (!canEdit || savingSource) return;
+    const next: ListenerSources =
+      sourceView === 'groups'
+        ? {
+            ...sources,
+            groups: sources.groups.filter((group) => group !== item.key),
+          }
+        : (() => {
+            const location = locationItems.find(
+              (entry) => entry.key === item.key,
+            );
+            if (!location) return sources;
+            return {
+              ...sources,
+              districtsByRegion: {
+                ...sources.districtsByRegion,
+                [location.region]: (
+                  sources.districtsByRegion[location.region] || []
+                ).filter((district) => district !== location.district),
+              },
+            };
+          })();
+    setSavingSource(true);
+    setSourceError('');
+    try {
+      await onSourcesChange(next);
+    } catch (error) {
+      setSourceError(
+        error instanceof Error ? error.message : 'Manbani o‘chirib bo‘lmadi.',
+      );
+    } finally {
+      setSavingSource(false);
+    }
+  }
+
+  async function editSource(item: { key: string; label: string }) {
+    if (!canEdit || savingSource) return;
+    const currentValue =
+      sourceView === 'groups'
+        ? item.label
+        : locationItems.find((entry) => entry.key === item.key)?.district || '';
+    const value = window
+      .prompt('Yangi qiymatni kiriting', currentValue)
+      ?.trim();
+    if (!value || value === currentValue) return;
+    const next: ListenerSources =
+      sourceView === 'groups'
+        ? {
+            ...sources,
+            groups: sources.groups.map((group) =>
+              group === item.key ? value : group,
+            ),
+          }
+        : (() => {
+            const location = locationItems.find(
+              (entry) => entry.key === item.key,
+            );
+            if (!location) return sources;
+            return {
+              ...sources,
+              districtsByRegion: {
+                ...sources.districtsByRegion,
+                [location.region]: (
+                  sources.districtsByRegion[location.region] || []
+                ).map((district) =>
+                  district === location.district ? value : district,
+                ),
+              },
+            };
+          })();
+    setSavingSource(true);
+    setSourceError('');
+    try {
+      await onSourcesChange(next);
+    } catch (error) {
+      setSourceError(
+        error instanceof Error ? error.message : 'Manbani tahrirlab bo‘lmadi.',
+      );
+    } finally {
+      setSavingSource(false);
+    }
+  }
   return (
     <section className="ting-source-page">
       <header className="ting-source-hero">
@@ -2660,10 +3016,16 @@ function SourcesPanel() {
               : 'Har bir kategoriya va unga bog‘langan guruhlarni boshqaring.'}
           </p>
         </div>
-        <button type="button" onClick={() => setEntryOpen(true)}>
-          <span>＋</span>
-          {sourceView === 'locations' ? 'HUDUD QO‘SHISH' : 'GURUH QO‘SHISH'}
-        </button>
+        {canEdit && (
+          <button
+            type="button"
+            disabled={savingSource}
+            onClick={() => setEntryOpen(true)}
+          >
+            <span>＋</span>
+            {sourceView === 'locations' ? 'HUDUD QO‘SHISH' : 'GURUH QO‘SHISH'}
+          </button>
+        )}
       </header>
       <nav className="ting-source-switch">
         <button
@@ -2678,7 +3040,7 @@ function SourcesPanel() {
             <small>Viloyat va unga tegishli tuman-shaharlar</small>
           </span>
           <b>
-            {entries.filter((entry) => entry.kind === 'Ҳудуд ва туман').length}
+            {locationItems.length}
             <i>hudud</i>
           </b>
         </button>
@@ -2714,12 +3076,14 @@ function SourcesPanel() {
               qiymat tanlanadi.
             </p>
           </div>
-          <button type="button" onClick={() => setEntryOpen(true)}>
-            ＋{' '}
-            {sourceView === 'locations'
-              ? 'Viloyat yoki tuman'
-              : 'Kategoriya yoki guruh'}
-          </button>
+          {canEdit && (
+            <button type="button" onClick={() => setEntryOpen(true)}>
+              ＋{' '}
+              {sourceView === 'locations'
+                ? 'Viloyat yoki tuman'
+                : 'Kategoriya yoki guruh'}
+            </button>
+          )}
         </header>
         <div className="ting-split-workspace">
           <aside className="ting-master-rail">
@@ -2743,25 +3107,46 @@ function SourcesPanel() {
               <div className="ting-detail-tools">
                 <label>
                   <span>⌕</span>
-                  <input placeholder="Manbani qidiring" />
+                  <input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Manbani qidiring"
+                  />
                 </label>
-                <button type="button" onClick={() => setEntryOpen(true)}>
-                  ＋
-                </button>
+                {canEdit && (
+                  <button type="button" onClick={() => setEntryOpen(true)}>
+                    ＋
+                  </button>
+                )}
               </div>
             </div>
             <div className="ting-link-grid">
               {sourceItems.map((item, index) => (
-                <div className="ting-link-item" key={item}>
+                <div className="ting-link-item" key={item.key}>
                   <b>{String(index + 1).padStart(2, '0')}</b>
-                  <span>{item}</span>
+                  <span>{item.label}</span>
                   <small className="active">Faol</small>
-                  <div>
-                    <button type="button">✎</button>
-                    <button type="button" className="danger">
-                      ×
-                    </button>
-                  </div>
+                  {canEdit && (
+                    <div>
+                      <button
+                        type="button"
+                        aria-label={`${item.label} yozuvini tahrirlash`}
+                        disabled={savingSource}
+                        onClick={() => void editSource(item)}
+                      >
+                        ✎
+                      </button>
+                      <button
+                        type="button"
+                        className="danger"
+                        aria-label={`${item.label} yozuvini o‘chirish`}
+                        disabled={savingSource}
+                        onClick={() => void deleteSource(item)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -2770,16 +3155,22 @@ function SourcesPanel() {
                 <span>＋</span>
                 <h4>Ma’lumot kiritilmagan</h4>
                 <p>Birinchi yozuvni bittadan qo‘shing.</p>
-                <button type="button" onClick={() => setEntryOpen(true)}>
-                  Qo‘shish
-                </button>
+                {canEdit && (
+                  <button type="button" onClick={() => setEntryOpen(true)}>
+                    Qo‘shish
+                  </button>
+                )}
               </div>
             )}
           </div>
         </div>
       </article>
-      {entryOpen && (
-        <div className="ting-source-modal">
+      {entryOpen && canEdit && (
+        <dialog
+          open
+          className="ting-source-modal"
+          aria-label="Yangi manba qo‘shish"
+        >
           <form onSubmit={addEntry}>
             <header className={sourceView}>
               <div>
@@ -2797,15 +3188,19 @@ function SourcesPanel() {
               </button>
             </header>
             <div className="ting-source-form-grid">
-              <input
-                type="hidden"
-                name="sourceKind"
-                value={
-                  sourceView === 'locations'
-                    ? 'Ҳудуд ва туман'
-                    : 'Категория ва гуруҳ'
-                }
-              />
+              {sourceView === 'locations' && (
+                <label>
+                  <span>Hudud *</span>
+                  <select name="sourceRegion" required defaultValue="">
+                    <option value="" disabled>
+                      Tanlang
+                    </option>
+                    {Object.keys(districtsByRegion).map((region) => (
+                      <option key={region}>{region}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label>
                 <span>
                   {sourceView === 'locations' ? 'Tuman-shahar *' : 'Guruh *'}
@@ -2813,22 +3208,25 @@ function SourcesPanel() {
                 <input name="sourceValue" required />
                 <small>Yozuvlar manbaga bittadan qo‘shiladi</small>
               </label>
-              <label className="ting-source-check">
-                <input type="checkbox" defaultChecked />
-                <span>Faol manba sifatida ishlatilsin</span>
-              </label>
             </div>
             <footer>
               <button type="button" onClick={() => setEntryOpen(false)}>
                 Bekor qilish
               </button>
-              <button className="primary">
-                {sourceView === 'locations'
-                  ? 'HUDUDNI SAQLASH'
-                  : 'GURUHNI SAQLASH'}
+              <button className="primary" disabled={savingSource}>
+                {savingSource
+                  ? 'SAQLANMOQDA…'
+                  : sourceView === 'locations'
+                    ? 'HUDUDNI SAQLASH'
+                    : 'GURUHNI SAQLASH'}
               </button>
             </footer>
           </form>
+        </dialog>
+      )}
+      {sourceError && (
+        <div className="notice error" role="alert">
+          ! {sourceError}
         </div>
       )}
     </section>
@@ -2844,35 +3242,42 @@ function permissionsForRole(role: AccessRole) {
   if (role === 'Foydalanuvchi') {
     return [
       'Tinglovchilar:Ko‘rish',
+      'Tinglovchilar:Kiritish',
       'Tinglovchi formasi:Ko‘rish',
       'Tinglovchi formasi:Kiritish',
       'Shartlar:Ko‘rish',
       'Manbalar:Ko‘rish',
     ];
   }
-  return [
-    'Tinglovchilar:Ko‘rish',
-    'Shartlar:Ko‘rish',
-    'Manbalar:Ko‘rish',
-  ];
+  return ['Tinglovchilar:Ko‘rish', 'Shartlar:Ko‘rish', 'Manbalar:Ko‘rish'];
 }
 
 function initialsFor(name: string) {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join('')
-    .toUpperCase() || 'FA';
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join('')
+      .toUpperCase() || 'FA'
+  );
 }
 
 function RolesPanel({
   members,
+  canEdit,
+  canRestore,
+  saving,
   onMembersChange,
+  onListenerRestored,
 }: {
   members: RoleMember[];
-  onMembersChange: (members: RoleMember[]) => void;
+  canEdit: boolean;
+  canRestore: boolean;
+  saving: boolean;
+  onMembersChange: (members: RoleMember[]) => Promise<void>;
+  onListenerRestored: (listener: ListenerRecord) => void;
 }) {
   const [activeTab, setActiveTab] = useState<
     'roles' | 'permissions' | 'monitoring'
@@ -2885,6 +3290,29 @@ function RolesPanel({
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<AccessRole>('Foydalanuvchi');
   const [formError, setFormError] = useState('');
+  const [auditEvents, setAuditEvents] = useState<
+    Array<{
+      id: number;
+      actor_email: string;
+      action: string;
+      entity_type: string;
+      entity_id: string;
+      created_at: string;
+    }>
+  >([]);
+  const [deletedListeners, setDeletedListeners] = useState<
+    Array<{
+      id: string;
+      full_name: string;
+      group_name: string;
+      training_year: string;
+      deleted_at: string;
+      deleted_by: string;
+    }>
+  >([]);
+  const [monitoringLoading, setMonitoringLoading] = useState(false);
+  const [monitoringError, setMonitoringError] = useState('');
+  const [restoringId, setRestoringId] = useState('');
   const selectedMember =
     members.find((member) => member.id === selectedMemberId) ?? members[0];
   const roleNotes: Record<AccessRole, string> = {
@@ -2894,8 +3322,78 @@ function RolesPanel({
     'Ko‘ruvchi': 'Faqat ko‘rish rejimida ishlaydi.',
   };
 
+  useEffect(() => {
+    if (activeTab !== 'monitoring') return;
+    const controller = new AbortController();
+    setMonitoringLoading(true);
+    setMonitoringError('');
+    void fetch('/api/admin/audit', {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const result = (await response.json()) as {
+          error?: string;
+          events?: typeof auditEvents;
+          deletedListeners?: typeof deletedListeners;
+        };
+        if (!response.ok) {
+          throw new Error(result.error || 'Monitoringni yuklab bo‘lmadi.');
+        }
+        setAuditEvents(Array.isArray(result.events) ? result.events : []);
+        setDeletedListeners(
+          Array.isArray(result.deletedListeners) ? result.deletedListeners : [],
+        );
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setMonitoringError(
+          error instanceof Error
+            ? error.message
+            : 'Monitoringni yuklab bo‘lmadi.',
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setMonitoringLoading(false);
+      });
+    return () => controller.abort();
+  }, [activeTab]);
+
+  async function restoreListener(id: string) {
+    if (!canRestore || restoringId) return;
+    setMonitoringError('');
+    setRestoringId(id);
+    try {
+      const response = await fetch(
+        `/api/admin/listeners/${encodeURIComponent(id)}`,
+        { method: 'PATCH' },
+      );
+      const result = (await response.json()) as {
+        error?: string;
+        listener?: ListenerRecord;
+      };
+      if (!response.ok || !result.listener) {
+        setMonitoringError(result.error || 'Tinglovchini tiklab bo‘lmadi.');
+        return;
+      }
+      onListenerRestored(result.listener);
+      setDeletedListeners((current) =>
+        current.filter((item) => item.id !== id),
+      );
+    } catch (error) {
+      setMonitoringError(
+        error instanceof Error
+          ? error.message
+          : 'Tinglovchini tiklab bo‘lmadi.',
+      );
+    } finally {
+      setRestoringId('');
+    }
+  }
+
   function updateMember(id: string, patch: Partial<RoleMember>) {
-    onMembersChange(
+    if (!canEdit || saving) return;
+    void onMembersChange(
       members.map((member) =>
         member.id === id ? { ...member, ...patch } : member,
       ),
@@ -2903,7 +3401,7 @@ function RolesPanel({
   }
 
   function updateRole(member: RoleMember, nextRole: AccessRole) {
-    if (member.locked) return;
+    if (!canEdit || saving || member.locked) return;
     updateMember(member.id, {
       role: nextRole,
       permissions: permissionsForRole(nextRole),
@@ -2911,15 +3409,16 @@ function RolesPanel({
   }
 
   function togglePermission(member: RoleMember, permission: string) {
-    if (member.locked) return;
+    if (!canEdit || saving || member.locked) return;
     const permissions = member.permissions.includes(permission)
       ? member.permissions.filter((item) => item !== permission)
       : [...member.permissions, permission];
     updateMember(member.id, { permissions });
   }
 
-  function addMember(event: FormEvent<HTMLFormElement>) {
+  function addMember(event: SyntheticEvent<HTMLFormElement, SubmitEvent>) {
     event.preventDefault();
+    if (!canEdit || saving) return;
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
     if (!cleanName || !/^\S+@\S+\.\S+$/.test(cleanEmail)) {
@@ -2939,7 +3438,7 @@ function RolesPanel({
       active: true,
       permissions: permissionsForRole(role),
     };
-    onMembersChange([...members, member]);
+    void onMembersChange([...members, member]);
     setSelectedMemberId(member.id);
     setName('');
     setEmail('');
@@ -2978,7 +3477,7 @@ function RolesPanel({
             </button>
           </div>
         </div>
-        {activeTab === 'roles' && (
+        {activeTab === 'roles' && canEdit && (
           <button
             type="button"
             className="staff-entry-button access-entry-button"
@@ -2989,16 +3488,21 @@ function RolesPanel({
         )}
       </div>
 
-      {entryOpen && (
+      {entryOpen && canEdit && (
         <article className="access-panel access-entry-panel">
           <div className="access-panel-head">
             <div>
               <p className="eyebrow">YANGI ISHTIROKCHI</p>
               <h3>Ruxsat berish</h3>
-              <p>E-mail orqali rolni biriktiring. Bosh admin roli himoyalangan.</p>
+              <p>
+                E-mail orqali rolni biriktiring. Bosh admin roli himoyalangan.
+              </p>
             </div>
           </div>
-          <form className="access-add-form access-form-grid" onSubmit={addMember}>
+          <form
+            className="access-add-form access-form-grid"
+            onSubmit={addMember}
+          >
             <label>
               <span>F.I.Sh. *</span>
               <input
@@ -3029,11 +3533,16 @@ function RolesPanel({
                 <option>Ko‘ruvchi</option>
               </select>
             </label>
-            <button className="primary" type="submit">
-              RUXSATNI SAQLASH
+            <button className="primary" type="submit" disabled={saving}>
+              {saving ? 'SAQLANMOQDA…' : 'RUXSATNI SAQLASH'}
             </button>
           </form>
-          {formError && <p className="access-form-error"><span>!</span>{formError}</p>}
+          {formError && (
+            <p className="access-form-error">
+              <span>!</span>
+              {formError}
+            </p>
+          )}
         </article>
       )}
 
@@ -3079,28 +3588,52 @@ function RolesPanel({
                     <tr key={member.id}>
                       <td>
                         <b>{member.name}</b>
-                        {member.locked && <small className="access-current-badge">HIMOYALANGAN</small>}
+                        {member.locked && (
+                          <small className="access-current-badge">
+                            HIMOYALANGAN
+                          </small>
+                        )}
                       </td>
-                      <td><a href={`mailto:${member.email}`}>{member.email}</a></td>
+                      <td>
+                        <a href={`mailto:${member.email}`}>{member.email}</a>
+                      </td>
                       <td>
                         <select
-                          className={member.role === 'Bosh admin' ? 'role-select super' : 'role-select'}
+                          className={
+                            member.role === 'Bosh admin'
+                              ? 'role-select super'
+                              : 'role-select'
+                          }
                           value={member.role}
-                          disabled={member.locked}
-                          onChange={(event) => updateRole(member, event.target.value as AccessRole)}
+                          disabled={!canEdit || saving || member.locked}
+                          onChange={(event) =>
+                            updateRole(member, event.target.value as AccessRole)
+                          }
                         >
                           {(member.locked
                             ? (['Bosh admin'] as AccessRole[])
-                            : (['Admin', 'Foydalanuvchi', 'Ko‘ruvchi'] as AccessRole[])
-                          ).map((item) => <option key={item}>{item}</option>)}
+                            : ([
+                                'Admin',
+                                'Foydalanuvchi',
+                                'Ko‘ruvchi',
+                              ] as AccessRole[])
+                          ).map((item) => (
+                            <option key={item}>{item}</option>
+                          ))}
                         </select>
                       </td>
                       <td>
                         <button
                           type="button"
-                          className={member.active ? 'access-simple-check' : 'access-simple-check off'}
-                          disabled={member.locked}
-                          onClick={() => updateMember(member.id, { active: !member.active })}
+                          className={
+                            member.active
+                              ? 'access-simple-check'
+                              : 'access-simple-check off'
+                          }
+                          disabled={!canEdit || saving || member.locked}
+                          onClick={() =>
+                            updateMember(member.id, { active: !member.active })
+                          }
                         >
                           {member.active ? 'Faol' : 'Nofaol'}
                         </button>
@@ -3109,10 +3642,13 @@ function RolesPanel({
                         <button
                           type="button"
                           className="access-edit-button"
-                          disabled={member.locked}
+                          disabled={!canEdit || saving || member.locked}
                           onClick={() => {
-                            onMembersChange(members.filter((item) => item.id !== member.id));
-                            if (selectedMemberId === member.id) setSelectedMemberId(defaultRoleMembers[0].id);
+                            void onMembersChange(
+                              members.filter((item) => item.id !== member.id),
+                            );
+                            if (selectedMemberId === member.id)
+                              setSelectedMemberId(defaultRoleMembers[0].id);
                           }}
                         >
                           {member.locked ? 'HIMOYA' : 'O‘CHIRISH'}
@@ -3151,7 +3687,9 @@ function RolesPanel({
           <article className="access-policy-ledger">
             <div className="access-policy-head">
               <span>SAHIFA</span>
-              {accessActions.map((action) => <span key={action}>{action}</span>)}
+              {accessActions.map((action) => (
+                <span key={action}>{action}</span>
+              ))}
             </div>
             <div className="access-policy-body">
               {accessPages.map((page) => (
@@ -3159,14 +3697,21 @@ function RolesPanel({
                   <strong>{page}</strong>
                   {accessActions.map((action) => {
                     const permission = `${page}:${action}`;
-                    const allowed = selectedMember.permissions.includes(permission);
+                    const allowed =
+                      selectedMember.permissions.includes(permission);
                     return (
                       <button
                         type="button"
                         key={permission}
-                        className={allowed ? 'access-policy-toggle allowed' : 'access-policy-toggle'}
-                        disabled={selectedMember.locked}
-                        onClick={() => togglePermission(selectedMember, permission)}
+                        className={
+                          allowed
+                            ? 'access-policy-toggle allowed'
+                            : 'access-policy-toggle'
+                        }
+                        disabled={!canEdit || saving || selectedMember.locked}
+                        onClick={() =>
+                          togglePermission(selectedMember, permission)
+                        }
                         aria-label={`${page}: ${action}`}
                       >
                         {allowed ? '✓' : '–'}
@@ -3179,7 +3724,8 @@ function RolesPanel({
           </article>
           {selectedMember.locked && (
             <p className="access-policy-lock">
-              {selectedMember.email} — Bosh admin. Barcha ruxsatlar doim ochiq va o‘zgartirilmaydi.
+              {selectedMember.email} — Bosh admin. Barcha ruxsatlar doim ochiq
+              va o‘zgartirilmaydi.
             </p>
           )}
         </section>
@@ -3190,24 +3736,93 @@ function RolesPanel({
           <div className="access-monitoring-toolbar">
             <div>
               <p className="eyebrow">FAOLLIK NAZORATI</p>
-              <h3>Ruxsat holati</h3>
+              <h3>Neon audit jurnali va arxiv</h3>
             </div>
           </div>
+          {monitoringLoading && <output>Monitoring yuklanmoqda…</output>}
+          {monitoringError && (
+            <p className="access-form-error" role="alert">
+              <span>!</span> {monitoringError}
+            </p>
+          )}
+          {deletedListeners.length > 0 && (
+            <article className="access-panel access-matrix-panel">
+              <div className="access-panel-head">
+                <div>
+                  <p className="eyebrow">TIKLASH MUMKIN</p>
+                  <h3>Arxivlangan tinglovchilar</h3>
+                </div>
+              </div>
+              <div className="access-table-wrap">
+                <table className="access-simple-grid">
+                  <thead>
+                    <tr>
+                      <th>F.I.Sh.</th>
+                      <th>Guruh</th>
+                      <th>Yil</th>
+                      <th>O‘chirgan</th>
+                      <th>Amal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deletedListeners.map((listener) => (
+                      <tr key={listener.id}>
+                        <td>{listener.full_name}</td>
+                        <td>{listener.group_name}</td>
+                        <td>{listener.training_year}</td>
+                        <td>{listener.deleted_by}</td>
+                        <td>
+                          {canRestore ? (
+                            <button
+                              type="button"
+                              className="access-edit-button"
+                              disabled={Boolean(restoringId)}
+                              onClick={() => void restoreListener(listener.id)}
+                            >
+                              {restoringId === listener.id
+                                ? 'TIKLANMOQDA…'
+                                : 'TIKLASH'}
+                            </button>
+                          ) : (
+                            <span>Faqat ko‘rish</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          )}
           <div className="access-monitoring-ledger">
             <div className="access-monitoring-head">
-              <span>F.I.Sh.</span><span>E-mail</span><span>Rol</span><span>Holat</span><span>Ruxsatlar</span><span>Izoh</span><span>YANGILANDI</span>
+              <span>№</span>
+              <span>E-mail</span>
+              <span>Amal</span>
+              <span>Obyekt</span>
+              <span>ID</span>
+              <span>Holat</span>
+              <span>Vaqt</span>
             </div>
-            {members.map((member) => (
-              <div className="access-monitoring-row" key={member.id}>
-                <strong>{member.name}</strong>
-                <a href={`mailto:${member.email}`}>{member.email}</a>
-                <span>{member.role}</span>
-                <span className={member.active ? 'access-presence active' : 'access-presence'}><i />{member.active ? 'Faol' : 'Nofaol'}</span>
-                <span>{member.permissions.length} ta amal</span>
-                <span>{member.locked ? 'Bosh admin himoyalangan' : 'Mahalliy ruxsat yozuvi'}</span>
-                <span>Hozir</span>
+            {auditEvents.map((event, index) => (
+              <div className="access-monitoring-row" key={event.id}>
+                <strong>{String(index + 1).padStart(2, '0')}</strong>
+                <span>{event.actor_email}</span>
+                <span>{event.action}</span>
+                <span>{event.entity_type}</span>
+                <span>{event.entity_id}</span>
+                <span className="access-presence active">
+                  <i />
+                  Yozilgan
+                </span>
+                <span>
+                  {new Date(event.created_at).toLocaleString('uz-UZ')}
+                </span>
               </div>
             ))}
+            {!monitoringLoading && !auditEvents.length && (
+              <p>Audit jurnalida ҳали ёзув йўқ.</p>
+            )}
           </div>
         </section>
       )}

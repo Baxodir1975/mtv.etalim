@@ -20,7 +20,7 @@ export async function GET(request: Request) {
     const rows = await sql`
       SELECT id, group_name
       FROM listeners
-      WHERE id = ${binding.listenerId}
+      WHERE id = ${binding.listenerId} AND deleted_at IS NULL
       LIMIT 1
     `;
     if (!rows.length) {
@@ -42,7 +42,10 @@ export async function GET(request: Request) {
     }
     return response;
   } catch (error) {
-    logServerError('[api/device/session] Unable to validate device binding', error);
+    logServerError(
+      '[api/device/session] Unable to validate device binding',
+      error,
+    );
     return publicError('Qurilma ma’lumotini tekshirib bo‘lmadi.', 503);
   }
 }

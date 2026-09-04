@@ -1,8 +1,12 @@
 import {
+  defaultListenerSources,
   getDatabase,
+  hasPermission,
   jsonResponse,
+  knownRegions,
   listenerFromDb,
   logServerError,
+  normalizeListenerSources,
   publicError,
   type ListenerDbRow,
 } from '@/lib/server-data';
@@ -11,35 +15,9 @@ import {
   deviceBinding,
   deviceBindingCookie,
 } from '@/lib/auth';
-import { env } from 'cloudflare:workers';
+import { hasSameOrigin, rateLimit, validCalendarDate } from '@/lib/security';
 
 export const dynamic = 'force-dynamic';
-
-const allowedGroups = new Set(
-  [56, 57, 58, 59, 60, 61].map(
-    (number) => `Nomzod direktor (${number}-guruh)`,
-  ),
-);
-
-type RegistrationRateLimiter = {
-  limit(options: { key: string }): Promise<{ success: boolean }>;
-};
-
-type ListenerEnvironment = {
-  REGISTRATION_RATE_LIMITER?: RegistrationRateLimiter;
-};
-
-async function canSubmitListener(request: Request) {
-  const limiter = (env as unknown as ListenerEnvironment)
-    .REGISTRATION_RATE_LIMITER;
-  if (!limiter) return false;
-  const ip =
-    request.headers.get('cf-connecting-ip') ||
-    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    'unknown';
-  const result = await limiter.limit({ key: `listener-write:${ip}` });
-  return result.success;
-}
 
 const uploadRules = {
   photo: {
@@ -78,10 +56,6 @@ function phoneDigits(value: unknown) {
   if (digits.length === 9) return digits;
   if (digits.length === 12 && digits.startsWith('998')) return digits.slice(3);
   return '';
-}
-
-function isIsoDate(value: string) {
-  return !value || /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 function uploadedFile(form: FormData, field: UploadField) {
@@ -132,7 +106,9 @@ async function validateUploads(files: Partial<Record<UploadField, File>>) {
     }
   }
   if (totalBytes > 8 * 1024 * 1024) {
-    throw new Error('Yuklanayotgan fayllarning umumiy hajmi 8 MB dan oshmasin.');
+    throw new Error(
+      'Yuklanayotgan fayllarning umumiy hajmi 8 MB dan oshmasin.',
+    );
   }
 }
 
@@ -142,9 +118,12 @@ function safeFileName(name: string) {
 
 export async function POST(request: Request) {
   try {
-    const admin = await authenticatedAdmin(request);
-    let binding = admin ? null : await deviceBinding(request);
-    if (!admin && !(await canSubmitListener(request))) {
+    if (!hasSameOrigin(request)) {
+      return publicError('Saqlash so‘rovi manbasi tasdiqlanmadi.', 403);
+    }
+    const member = await authenticatedAdmin(request);
+    let binding = member ? null : await deviceBinding(request);
+    if (!member && !(await rateLimit(request, 'listener-write'))) {
       return publicError(
         'Juda ko‘p saqlash urinishi. Bir daqiqadan keyin qayta urinib ko‘ring.',
         429,
@@ -152,7 +131,10 @@ export async function POST(request: Request) {
     }
     const contentLength = Number(request.headers.get('content-length') || 0);
     if (Number.isFinite(contentLength) && contentLength > 9 * 1024 * 1024) {
-      return publicError('Yuklanayotgan ma’lumotlar hajmi 9 MB dan oshmasin.', 413);
+      return publicError(
+        'Yuklanayotgan ma’lumotlar hajmi 9 MB dan oshmasin.',
+        413,
+      );
     }
     const form = await request.formData();
     const rawPayload = form.get('payload');
@@ -180,36 +162,63 @@ export async function POST(request: Request) {
     const firstName = text(input, 'firstName', 120);
     const patronymic = text(input, 'patronymic', 120);
     const position = text(input, 'position', 160) || '—';
-    const startDate = text(input, 'startDate', 10);
+    let startDate = text(input, 'startDate', 10);
     const birthDate = text(input, 'birthDate', 10);
-    const trainingYear = text(input, 'year', 4) || '2026';
+    let trainingYear = text(input, 'year', 4) || '2026';
     const note = text(input, 'note', 2000);
+
+    const sql = getDatabase();
+    const sourceRows = await sql`
+      SELECT setting_value
+      FROM app_settings
+      WHERE setting_key = 'listener_sources'
+      LIMIT 1
+    `;
+    const sourceValue = sourceRows[0]?.setting_value;
+    const configuredSources = sourceValue
+      ? normalizeListenerSources(sourceValue)
+      : defaultListenerSources();
+    const allowedGroups = new Set(configuredSources.groups);
+    const allowedDistricts = configuredSources.districtsByRegion[region] || [];
 
     if (
       !phone ||
       !allowedGroups.has(group) ||
       category !== 'Nomzod direktor' ||
-      !region ||
+      !startDate ||
+      !knownRegions.includes(region as (typeof knownRegions)[number]) ||
       !district ||
+      !allowedDistricts.includes(district) ||
       !workplace ||
       !surname ||
       !firstName
     ) {
-      return publicError('Majburiy maydonlarni to‘liq va to‘g‘ri kiriting.', 400);
+      return publicError(
+        'Majburiy maydonlarni to‘liq va to‘g‘ri kiriting.',
+        400,
+      );
     }
-    if (!/^\d{4}$/.test(trainingYear) || !isIsoDate(startDate) || !isIsoDate(birthDate)) {
+    if (
+      !/^\d{4}$/.test(trainingYear) ||
+      !validCalendarDate(startDate, true) ||
+      !validCalendarDate(birthDate) ||
+      trainingYear !== startDate.slice(0, 4)
+    ) {
       return publicError('Sana yoki yil noto‘g‘ri kiritilgan.', 400);
     }
-
-    const sql = getDatabase();
-    if (!admin && binding) {
+    if (birthDate && birthDate > new Date().toISOString().slice(0, 10)) {
+      return publicError('Tug‘ilgan sana kelajakda bo‘lishi mumkin emas.', 400);
+    }
+    if (!member && binding) {
       const boundRows = await sql`
-        SELECT id FROM listeners WHERE id = ${binding.listenerId} LIMIT 1
+        SELECT id FROM listeners
+        WHERE id = ${binding.listenerId} AND deleted_at IS NULL
+        LIMIT 1
       `;
       if (!boundRows.length) binding = null;
     }
 
-    if (!admin) {
+    if (!member) {
       if (editingId) {
         if (!binding || binding.listenerId !== editingId) {
           return publicError(
@@ -225,6 +234,15 @@ export async function POST(request: Request) {
       }
     }
 
+    if (member) {
+      const permission = editingId
+        ? 'Tinglovchilar:Tahrirlash'
+        : 'Tinglovchilar:Kiritish';
+      if (!hasPermission(member, permission)) {
+        return publicError('Bu amal uchun ruxsat yo‘q.', 403);
+      }
+    }
+
     const currentRows = editingId
       ? await sql`
           SELECT
@@ -234,7 +252,7 @@ export async function POST(request: Request) {
             photo_url, order_file_url, passport_front_url, passport_back_url,
             created_at, updated_at
           FROM listeners
-          WHERE id = ${editingId}
+          WHERE id = ${editingId} AND deleted_at IS NULL
           LIMIT 1
         `
       : await sql`
@@ -245,7 +263,7 @@ export async function POST(request: Request) {
             photo_url, order_file_url, passport_front_url, passport_back_url,
             created_at, updated_at
           FROM listeners
-          WHERE phone_digits = ${phone}
+          WHERE phone_digits = ${phone} AND deleted_at IS NULL
           LIMIT 1
         `;
     const current = currentRows[0] as ListenerDbRow | undefined;
@@ -253,11 +271,16 @@ export async function POST(request: Request) {
     if (editingId && !current) {
       return publicError('Tahrirlanayotgan tinglovchi topilmadi.', 404);
     }
-    if (!admin && editingId && binding && current) {
-      // An admin may have moved this listener after the device cookie was
-      // issued. Preserve the database group and refresh the cookie instead of
-      // allowing a stale browser to move the listener back.
+    if (!member && editingId && binding && current) {
+      // A public device owns one exact cohort, not just a group label. Preserve
+      // the server values so a stale or manipulated browser cannot pivot to a
+      // different month/year and enumerate another cohort.
       group = current.group_name;
+      trainingYear = current.training_year;
+      startDate =
+        current.start_date instanceof Date
+          ? current.start_date.toISOString().slice(0, 10)
+          : String(current.start_date || '').slice(0, 10);
     }
     if (!editingId && current) {
       return publicError(
@@ -270,10 +293,14 @@ export async function POST(request: Request) {
       const duplicate = await sql`
         SELECT id FROM listeners
         WHERE phone_digits = ${phone} AND id <> ${editingId}
+          AND deleted_at IS NULL
         LIMIT 1
       `;
       if (duplicate.length) {
-        return publicError('Bu telefon raqami boshqa tinglovchiga biriktirilgan.', 409);
+        return publicError(
+          'Bu telefon raqami boshqa tinglovchiga biriktirilgan.',
+          409,
+        );
       }
     }
 
@@ -296,7 +323,7 @@ export async function POST(request: Request) {
     }
 
     const id = current?.id || crypto.randomUUID();
-    const preparedDeviceCookie = admin
+    const preparedDeviceCookie = member
       ? ''
       : await deviceBindingCookie(id, group);
     const objectKeys = {
@@ -369,7 +396,7 @@ export async function POST(request: Request) {
               passport_front_url = ${objectKeys.passportFront},
               passport_back_url = ${objectKeys.passportBack},
               updated_at = NOW()
-            WHERE id = ${id}
+            WHERE id = ${id} AND deleted_at IS NULL
             RETURNING
               id, phone_digits, start_date, training_year, category, group_name,
               initials, surname, first_name, patronymic, full_name, workplace,
@@ -407,9 +434,13 @@ export async function POST(request: Request) {
               INSERT INTO listener_files (
                 listener_id, file_kind, original_name, mime_type, file_size,
                 file_bytes
-              ) VALUES (
+              )
+              SELECT
                 ${id}, ${file.field}, ${file.name}, ${file.type}, ${file.size},
                 ${file.bytes}
+              WHERE EXISTS (
+                SELECT 1 FROM listeners
+                WHERE id = ${id} AND deleted_at IS NULL
               )
               ON CONFLICT (listener_id, file_kind) DO UPDATE SET
                 original_name = EXCLUDED.original_name,
@@ -419,6 +450,24 @@ export async function POST(request: Request) {
                 updated_at = NOW()
             `,
           ),
+        ...(member
+          ? [
+              tx`
+                INSERT INTO admin_audit_log (
+                  actor_email, action, entity_type, entity_id, details
+                )
+                SELECT
+                  ${member.email},
+                  ${editingId ? 'listener.update' : 'listener.create'},
+                  'listener', ${id},
+                  CAST(${JSON.stringify({ group, trainingYear })} AS JSONB)
+                WHERE EXISTS (
+                  SELECT 1 FROM listeners
+                  WHERE id = ${id} AND deleted_at IS NULL
+                )
+              `,
+            ]
+          : []),
       ];
     });
     const savedRows = transactionResults[0];
@@ -430,7 +479,7 @@ export async function POST(request: Request) {
       { listener: listenerFromDb(savedRows[0] as ListenerDbRow) },
       current ? 200 : 201,
     );
-    if (!admin) {
+    if (!member) {
       response.headers.append('Set-Cookie', preparedDeviceCookie);
     }
     return response;

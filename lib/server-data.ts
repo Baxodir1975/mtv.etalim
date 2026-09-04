@@ -42,6 +42,24 @@ export type RoleDbRow = {
   permissions: string[] | string;
 };
 
+export type AccessRole = RoleDbRow['role_name'];
+
+export type RoleMember = {
+  id: string;
+  initials: string;
+  name: string;
+  email: string;
+  role: AccessRole;
+  active: boolean;
+  locked: boolean;
+  permissions: string[];
+};
+
+export type ListenerSources = {
+  groups: string[];
+  districtsByRegion: Record<string, string[]>;
+};
+
 export const protectedHeadAdmins = [
   {
     id: 'super-admin-ilxomovb2023',
@@ -65,6 +83,331 @@ export const accessPages = [
 export const headAdminPermissions = accessPages.flatMap((page) =>
   accessActions.map((action) => `${page}:${action}`),
 );
+
+export const knownPermissions = new Set(headAdminPermissions);
+
+export const defaultListenerGroups = [56, 57, 58, 59, 60, 61].map(
+  (number) => `Nomzod direktor (${number}-guruh)`,
+);
+
+export const knownRegions = [
+  'Qoraqalpog‘iston Respublikasi',
+  'Andijon viloyati',
+  'Buxoro viloyati',
+  'Jizzax viloyati',
+  'Qashqadaryo viloyati',
+  'Navoiy viloyati',
+  'Namangan viloyati',
+  'Samarqand viloyati',
+  'Surxondaryo viloyati',
+  'Sirdaryo viloyati',
+  'Toshkent viloyati',
+  'Toshkent shahri',
+  'Farg‘ona viloyati',
+  'Xorazm viloyati',
+] as const;
+
+export const defaultDistrictsByRegion: Record<string, string[]> = {
+  'Qoraqalpog‘iston Respublikasi': [
+    'Amudaryo tumani',
+    'Beruniy tumani',
+    'Bo‘zatov tumani',
+    'Chimboy tumani',
+    'Ellikqal’a tumani',
+    'Kegeyli tumani',
+    'Mo‘ynoq tumani',
+    'Nukus shahri',
+    'Nukus tumani',
+    'Qanliko‘l tumani',
+    'Qo‘ng‘irot tumani',
+    'Qorao‘zak tumani',
+    'Shumanay tumani',
+    'Taxtako‘pir tumani',
+    'Taxiatosh tumani',
+    'To‘rtko‘l tumani',
+    'Xo‘jayli tumani',
+  ],
+  'Andijon viloyati': [
+    'Andijon shahri',
+    'Andijon tumani',
+    'Asaka tumani',
+    'Baliqchi tumani',
+    'Bo‘ston tumani',
+    'Buloqboshi tumani',
+    'Izboskan tumani',
+    'Jalaquduq tumani',
+    'Marhamat tumani',
+    'Oltinko‘l tumani',
+    'Paxtaobod tumani',
+    'Qo‘rg‘ontepa tumani',
+    'Shahrixon tumani',
+    'Ulug‘nor tumani',
+    'Xo‘jaobod tumani',
+    'Xonobod shahri',
+  ],
+  'Buxoro viloyati': [
+    'Buxoro shahri',
+    'Buxoro tumani',
+    'G‘ijduvon tumani',
+    'Jondor tumani',
+    'Kogon shahri',
+    'Kogon tumani',
+    'Olot tumani',
+    'Peshku tumani',
+    'Qorako‘l tumani',
+    'Qorovulbozor tumani',
+    'Romitan tumani',
+    'Shofirkon tumani',
+    'Vobkent tumani',
+  ],
+  'Jizzax viloyati': [
+    'Arnasoy tumani',
+    'Baxmal tumani',
+    'Do‘stlik tumani',
+    'Forish tumani',
+    'G‘allaorol tumani',
+    'Jizzax shahri',
+    'Mirzacho‘l tumani',
+    'Paxtakor tumani',
+    'Sharof Rashidov tumani',
+    'Yangiobod tumani',
+    'Zafarobod tumani',
+    'Zarbdor tumani',
+    'Zomin tumani',
+  ],
+  'Qashqadaryo viloyati': [
+    'Chiroqchi tumani',
+    'Dehqonobod tumani',
+    'G‘uzor tumani',
+    'Kasbi tumani',
+    'Kitob tumani',
+    'Ko‘kdala tumani',
+    'Koson tumani',
+    'Mirishkor tumani',
+    'Muborak tumani',
+    'Nishon tumani',
+    'Qamashi tumani',
+    'Qarshi shahri',
+    'Qarshi tumani',
+    'Shahrisabz shahri',
+    'Shahrisabz tumani',
+    'Yakkabog‘ tumani',
+  ],
+  'Navoiy viloyati': [
+    'G‘ozg‘on shahri',
+    'Karmana tumani',
+    'Konimex tumani',
+    'Navbahor tumani',
+    'Navoiy shahri',
+    'Nurota tumani',
+    'Qiziltepa tumani',
+    'Tomdi tumani',
+    'Uchquduq tumani',
+    'Xatirchi tumani',
+    'Zarafshon shahri',
+  ],
+  'Namangan viloyati': [
+    'Chortoq tumani',
+    'Chust tumani',
+    'Davlatobod tumani',
+    'Kosonsoy tumani',
+    'Mingbuloq tumani',
+    'Namangan shahri',
+    'Namangan tumani',
+    'Norin tumani',
+    'Pop tumani',
+    'To‘raqo‘rg‘on tumani',
+    'Uchqo‘rg‘on tumani',
+    'Uychi tumani',
+    'Yangi Namangan tumani',
+    'Yangiqo‘rg‘on tumani',
+  ],
+  'Samarqand viloyati': [
+    'Bulung‘ur tumani',
+    'Ishtixon tumani',
+    'Jomboy tumani',
+    'Kattaqo‘rg‘on shahri',
+    'Kattaqo‘rg‘on tumani',
+    'Narpay tumani',
+    'Nurobod tumani',
+    'Oqdaryo tumani',
+    'Paxtachi tumani',
+    'Pastdarg‘om tumani',
+    'Payariq tumani',
+    'Qo‘shrabot tumani',
+    'Samarqand shahri',
+    'Samarqand tumani',
+    'Toyloq tumani',
+    'Urgut tumani',
+  ],
+  'Surxondaryo viloyati': [
+    'Angor tumani',
+    'Bandixon tumani',
+    'Boysun tumani',
+    'Denov tumani',
+    'Jarqo‘rg‘on tumani',
+    'Muzrabot tumani',
+    'Oltinsoy tumani',
+    'Qiziriq tumani',
+    'Qumqo‘rg‘on tumani',
+    'Sariosiyo tumani',
+    'Sherobod tumani',
+    'Sho‘rchi tumani',
+    'Termiz shahri',
+    'Termiz tumani',
+    'Uzun tumani',
+  ],
+  'Sirdaryo viloyati': [
+    'Boyovut tumani',
+    'Guliston shahri',
+    'Guliston tumani',
+    'Mirzaobod tumani',
+    'Oqoltin tumani',
+    'Sardoba tumani',
+    'Sayxunobod tumani',
+    'Shirin shahri',
+    'Sirdaryo tumani',
+    'Yangiyer shahri',
+    'Xovos tumani',
+  ],
+  'Toshkent viloyati': [
+    'Angren shahri',
+    'Bekobod shahri',
+    'Bekobod tumani',
+    'Bo‘ka tumani',
+    'Bo‘stonliq tumani',
+    'Chinoz tumani',
+    'Chirchiq shahri',
+    'Ohangaron shahri',
+    'Ohangaron tumani',
+    'Olmaliq shahri',
+    'Oqqo‘rg‘on tumani',
+    'Parkent tumani',
+    'Piskent tumani',
+    'Qibray tumani',
+    'Quyi Chirchiq tumani',
+    'Yangiyo‘l shahri',
+    'Yangiyo‘l tumani',
+    'Yuqori Chirchiq tumani',
+    'Zangiota tumani',
+    'O‘rta Chirchiq tumani',
+  ],
+  'Toshkent shahri': [
+    'Bektemir tumani',
+    'Chilonzor tumani',
+    'Mirobod tumani',
+    'Mirzo Ulug‘bek tumani',
+    'Olmazor tumani',
+    'Sergeli tumani',
+    'Shayxontohur tumani',
+    'Uchtepa tumani',
+    'Yakkasaroy tumani',
+    'Yangihayot tumani',
+    'Yashnobod tumani',
+    'Yunusobod tumani',
+  ],
+  'Farg‘ona viloyati': [
+    'Bag‘dod tumani',
+    'Beshariq tumani',
+    'Buvayda tumani',
+    'Dang‘ara tumani',
+    'Farg‘ona shahri',
+    'Farg‘ona tumani',
+    'Furqat tumani',
+    'Marg‘ilon shahri',
+    'Oltiariq tumani',
+    'O‘zbekiston tumani',
+    'Qo‘qon shahri',
+    'Qo‘shtepa tumani',
+    'Quva tumani',
+    'Quvasoy shahri',
+    'Rishton tumani',
+    'So‘x tumani',
+    'Toshloq tumani',
+    'Uchko‘prik tumani',
+    'Yozyovon tumani',
+  ],
+  'Xorazm viloyati': [
+    'Bog‘ot tumani',
+    'Gurlan tumani',
+    'Hazorasp tumani',
+    'Qo‘shko‘pir tumani',
+    'Shovot tumani',
+    'Tuproqqal’a tumani',
+    'Urganch shahri',
+    'Urganch tumani',
+    'Xiva shahri',
+    'Xiva tumani',
+    'Xonqa tumani',
+    'Yangiariq tumani',
+    'Yangibozor tumani',
+  ],
+};
+
+export function defaultListenerSources(): ListenerSources {
+  return {
+    groups: [...defaultListenerGroups],
+    districtsByRegion: Object.fromEntries(
+      Object.entries(defaultDistrictsByRegion).map(([region, districts]) => [
+        region,
+        [...districts],
+      ]),
+    ),
+  };
+}
+
+export function normalizeListenerSources(value: unknown): ListenerSources {
+  const fallback = defaultListenerSources();
+  if (!value || typeof value !== 'object') return fallback;
+  const input = value as {
+    groups?: unknown;
+    districtsByRegion?: unknown;
+  };
+  const groups = Array.isArray(input.groups)
+    ? [
+        ...new Set(
+          input.groups
+            .filter((group): group is string => typeof group === 'string')
+            .map((group) => group.trim().slice(0, 100))
+            .filter(Boolean),
+        ),
+      ].slice(0, 100)
+    : fallback.groups;
+  const districtsByRegion: Record<string, string[]> = {};
+  if (
+    input.districtsByRegion &&
+    typeof input.districtsByRegion === 'object' &&
+    !Array.isArray(input.districtsByRegion)
+  ) {
+    for (const region of knownRegions) {
+      const districts = (input.districtsByRegion as Record<string, unknown>)[
+        region
+      ];
+      if (!Array.isArray(districts)) {
+        districtsByRegion[region] = [
+          ...(fallback.districtsByRegion[region] || []),
+        ];
+        continue;
+      }
+      districtsByRegion[region] = [
+        ...new Set(
+          districts
+            .filter(
+              (district): district is string => typeof district === 'string',
+            )
+            .map((district) => district.trim().slice(0, 120))
+            .filter(Boolean),
+        ),
+      ].slice(0, 100);
+    }
+  }
+  return {
+    groups: groups.length ? groups : fallback.groups,
+    districtsByRegion: Object.keys(districtsByRegion).length
+      ? districtsByRegion
+      : fallback.districtsByRegion,
+  };
+}
 
 export function isProtectedHeadAdmin(email: string) {
   const normalizedEmail = email.trim().toLowerCase();
@@ -122,9 +465,7 @@ export function listenerFromDb(row: ListenerDbRow) {
   const databaseFileUrl = (kind: 'photo' | 'order') =>
     `/api/files/${encodeURIComponent(row.id)}/${kind}${version ? `?v=${version}` : ''}`;
   const publicFileUrl = (storedValue: string, kind: 'photo' | 'order') =>
-    storedValue.startsWith('database:')
-      ? databaseFileUrl(kind)
-      : storedValue;
+    storedValue.startsWith('database:') ? databaseFileUrl(kind) : storedValue;
 
   return {
     id: row.id,
@@ -174,7 +515,7 @@ export function publicListenerFromDb(row: ListenerDbRow) {
   };
 }
 
-export function roleFromDb(row: RoleDbRow) {
+export function roleFromDb(row: RoleDbRow): RoleMember {
   let permissions: string[] = [];
   if (Array.isArray(row.permissions)) {
     permissions = row.permissions;
@@ -205,6 +546,13 @@ export function roleFromDb(row: RoleDbRow) {
   };
 }
 
+export function hasPermission(
+  member: Pick<RoleMember, 'active' | 'permissions'> | null | undefined,
+  permission: string,
+) {
+  return Boolean(member?.active && member.permissions.includes(permission));
+}
+
 export function jsonResponse(body: unknown, status = 200) {
   return Response.json(body, {
     status,
@@ -220,7 +568,8 @@ export function publicError(message: string, status: number) {
 }
 
 export function logServerError(scope: string, error: unknown) {
-  const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const raw =
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   const sanitized = raw
     .replace(/postgres(?:ql)?:\/\/\S+/gi, '[REDACTED_DATABASE_URL]')
     .replace(/(DATABASE_URL\s*[=:]\s*)\S+/gi, '$1[REDACTED]');

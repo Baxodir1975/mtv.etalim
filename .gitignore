@@ -37,3 +37,6 @@ next-env.d.ts
 /outputs/
 /work/
 *.tsbuildinfo
+
+# local release archives (uploaded to the authorized Drive folder instead)
+/docs/mtv-etalimai-source*.zip

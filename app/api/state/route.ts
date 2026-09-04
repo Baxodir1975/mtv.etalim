@@ -1,104 +1,148 @@
+import { authenticatedAdmin, deviceBinding } from '@/lib/auth';
 import {
+  defaultListenerSources,
   getDatabase,
-  headAdminPermissions,
+  hasPermission,
   jsonResponse,
   listenerFromDb,
   logServerError,
+  normalizeListenerSources,
   publicError,
   publicListenerFromDb,
-  protectedHeadAdmins,
   roleFromDb,
   type ListenerDbRow,
   type RoleDbRow,
 } from '@/lib/server-data';
-import { authenticatedAdmin, deviceBinding } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
+const listenerColumns = `
+  id, phone_digits, start_date, training_year, category, group_name,
+  initials, surname, first_name, patronymic, full_name, workplace,
+  region, district, position, birth_date, note, registration_status,
+  photo_url, order_file_url, passport_front_url, passport_back_url,
+  created_at, updated_at
+`;
+
+function settingValue(rows: Record<string, unknown>[], key: string) {
+  return rows.find((row) => row.setting_key === key)?.setting_value;
+}
+
+function telegramUrl(value: unknown) {
+  if (typeof value === 'string') return value;
+  if (
+    value &&
+    typeof value === 'object' &&
+    'url' in value &&
+    typeof (value as { url?: unknown }).url === 'string'
+  ) {
+    return (value as { url: string }).url;
+  }
+  return 'https://t.me/+HQ9koTozY_gxMGRi';
+}
+
 export async function GET(request: Request) {
   try {
-    const admin = await authenticatedAdmin(request);
-    const binding = admin ? null : await deviceBinding(request);
+    const [member, device] = await Promise.all([
+      authenticatedAdmin(request),
+      deviceBinding(request),
+    ]);
     const sql = getDatabase();
-    const permissionJson = JSON.stringify(headAdminPermissions);
+    const canViewAll = hasPermission(member, 'Tinglovchilar:Ko‘rish');
+    const canViewRoles = hasPermission(member, 'Rollar va ruxsatlar:Ko‘rish');
 
-    // Reassert the protected accounts on every bootstrap so they cannot be
-    // downgraded by a stale client or an accidental database edit.
-    for (const admin of protectedHeadAdmins) {
-      await sql`
-        INSERT INTO role_members (
-          id, full_name, email, role_name, is_active, is_locked, permissions
-        ) VALUES (
-          ${admin.id},
-          ${admin.fullName},
-          ${admin.email},
-          'Bosh admin',
-          TRUE,
-          TRUE,
-          CAST(${permissionJson} AS JSONB)
-        )
-        ON CONFLICT (email) DO UPDATE SET
-          full_name = EXCLUDED.full_name,
-          role_name = 'Bosh admin',
-          is_active = TRUE,
-          is_locked = TRUE,
-          permissions = EXCLUDED.permissions,
-          updated_at = NOW()
-      `;
-    }
-    await sql`
-      INSERT INTO app_settings (setting_key, setting_value)
-      VALUES (
-        'telegram_group_url',
-        CAST(${JSON.stringify({ url: 'https://t.me/+HQ9koTozY_gxMGRi' })} AS JSONB)
-      )
-      ON CONFLICT (setting_key) DO NOTHING
-    `;
-
-    const [listenerRows, roleRows, settingRows] = await Promise.all([
+    const [settingRows, roleRows] = await Promise.all([
       sql`
-        SELECT
-          id, phone_digits, start_date, training_year, category, group_name,
-          initials, surname, first_name, patronymic, full_name, workplace,
-          region, district, position, birth_date, note, registration_status,
-          photo_url, order_file_url, passport_front_url, passport_back_url,
-          created_at, updated_at
-        FROM listeners
-        ORDER BY created_at ASC
-      `,
-      sql`
-        SELECT id, full_name, email, role_name, is_active, is_locked, permissions
-        FROM role_members
-        ORDER BY is_locked DESC, created_at ASC
-      `,
-      sql`
-        SELECT setting_value
+        SELECT setting_key, setting_value
         FROM app_settings
-        WHERE setting_key = 'telegram_group_url'
-        LIMIT 1
+        WHERE setting_key IN ('telegram_group_url', 'listener_sources')
       `,
+      canViewRoles
+        ? sql`
+            SELECT id, full_name, email, role_name, is_active, is_locked, permissions
+            FROM role_members
+            ORDER BY is_locked DESC, created_at ASC
+          `
+        : Promise.resolve([]),
     ]);
 
-    const setting = settingRows[0]?.setting_value as unknown;
-    const telegramGroupUrl =
-      typeof setting === 'string'
-        ? setting
-        : typeof setting === 'object' &&
-            setting !== null &&
-            'url' in setting &&
-            typeof (setting as { url?: unknown }).url === 'string'
-          ? (setting as { url: string }).url
-          : '';
+    let listenerRows: Record<string, unknown>[] = [];
+    let scope: {
+      kind: 'anonymous' | 'staff' | 'device' | 'group';
+      group: string;
+      year: string;
+      month: string;
+      canViewAll: boolean;
+    } = {
+      kind: 'anonymous',
+      group: '',
+      year: '',
+      month: '',
+      canViewAll: false,
+    };
+
+    if (canViewAll) {
+      listenerRows = await sql.query(
+        `SELECT ${listenerColumns}
+         FROM listeners
+         WHERE deleted_at IS NULL
+         ORDER BY created_at ASC
+         LIMIT 1000`,
+        [],
+      );
+      scope = {
+        kind: 'staff',
+        group: '',
+        year: '',
+        month: '',
+        canViewAll: true,
+      };
+    } else if (device) {
+      const ownerRows = await sql`
+        SELECT group_name, training_year,
+               COALESCE(TO_CHAR(start_date, 'MM'), '') AS training_month
+        FROM listeners
+        WHERE id = ${device.listenerId} AND deleted_at IS NULL
+        LIMIT 1
+      `;
+      const owner = ownerRows[0];
+      if (owner) {
+        const group = String(owner.group_name || '');
+        const year = String(owner.training_year || '');
+        const month = String(owner.training_month || '');
+        listenerRows = await sql.query(
+          `SELECT ${listenerColumns}
+           FROM listeners
+           WHERE deleted_at IS NULL
+             AND group_name = $1
+             AND training_year = $2
+             AND COALESCE(TO_CHAR(start_date, 'MM'), '') = $3
+           ORDER BY created_at ASC
+           LIMIT 250`,
+          [group, year, month],
+        );
+        scope = { kind: 'device', group, year, month, canViewAll: false };
+      }
+    }
+
+    const settings = settingRows as Record<string, unknown>[];
+    const sourceValue = settingValue(settings, 'listener_sources');
+    const sources = sourceValue
+      ? normalizeListenerSources(sourceValue)
+      : defaultListenerSources();
 
     return jsonResponse({
       listeners: (listenerRows as ListenerDbRow[]).map((row) =>
-        admin || binding?.listenerId === row.id
+        canViewAll || device?.listenerId === row.id
           ? listenerFromDb(row)
           : publicListenerFromDb(row),
       ),
-      roles: admin ? (roleRows as RoleDbRow[]).map(roleFromDb) : [],
-      telegramGroupUrl:
-        telegramGroupUrl || 'https://t.me/+HQ9koTozY_gxMGRi',
+      roles: canViewRoles ? (roleRows as RoleDbRow[]).map(roleFromDb) : [],
+      telegramGroupUrl: telegramUrl(
+        settingValue(settings, 'telegram_group_url'),
+      ),
+      sources,
+      scope,
     });
   } catch (error) {
     logServerError('[api/state] Unable to load persisted state', error);

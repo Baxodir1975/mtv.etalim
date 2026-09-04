@@ -55,3 +55,11 @@
 .ting-map-empty h4{margin:10px 0 0;color:#38536f;font-size:12px}.ting-map-empty p{margin:5px 0 11px;color:#7e8fa2;font-size:9px}
 .ting-map-empty button{border:0;border-radius:8px;background:#1d5fa6;color:#fff;padding:8px 12px;font-size:8px;font-weight:850}.ting-map-panel.groups .ting-map-empty button{background:#207654}
 @media(max-width:760px){.ting-map-head{display:grid;align-items:start;padding:16px}.ting-map-head>button{width:100%}.ting-split-workspace{grid-template-columns:1fr;min-height:0}.ting-master-rail{display:flex;max-height:none;overflow-x:auto;border-right:0;border-bottom:1px solid #e1e8f0}.ting-master-rail button{flex:0 0 auto;width:auto;max-width:190px}.ting-detail-browser{padding:13px}.ting-detail-head{display:grid;align-items:start}.ting-detail-tools{width:100%}.ting-link-grid{grid-template-columns:1fr;max-height:430px}.ting-link-item>div{opacity:1}}
+
+/* mtv-etalimai native dialog and district selector support */
+.ting-source-form-grid select{width:100%;height:43px;border:1px solid #ccdae7;border-radius:10px;padding:0 11px;background:#fff;font:inherit;outline:none}
+.ting-source-form-grid select:focus{border-color:#4691d8;box-shadow:0 0 0 3px rgba(53,132,207,.11)}
+.ting-source-modal{width:100%;max-width:none;height:100%;max-height:none;margin:0;border:0;color:inherit}
+.ting-source-modal header.locations{background:#f4f8fd}
+.ting-source-modal header.groups{background:#f2faf6}
+.ting-source-modal header.groups p{color:#1d7654}

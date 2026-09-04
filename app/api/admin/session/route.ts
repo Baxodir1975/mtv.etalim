@@ -1,7 +1,4 @@
-import {
-  headAdminPermissions,
-  jsonResponse,
-} from '@/lib/server-data';
+import { jsonResponse } from '@/lib/server-data';
 import { authenticatedAdmin } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -20,9 +17,9 @@ export async function GET(request: Request) {
     authenticated: true,
     viewer: {
       email: admin.email,
-      name: admin.fullName,
-      role: 'Bosh admin',
-      permissions: headAdminPermissions,
+      name: admin.name,
+      role: admin.role,
+      permissions: admin.permissions,
     },
   });
 }

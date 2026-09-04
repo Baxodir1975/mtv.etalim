@@ -1,33 +1,18 @@
 import { adminFromCredentials, adminSessionCookie } from '@/lib/auth';
-import {
-  headAdminPermissions,
-  jsonResponse,
-  logServerError,
-  publicError,
-} from '@/lib/server-data';
+import { jsonResponse, logServerError, publicError } from '@/lib/server-data';
+import { hasSameOrigin, rateLimit } from '@/lib/security';
 
 export const dynamic = 'force-dynamic';
 
-const loginWindows = new Map<string, { count: number; resetAt: number }>();
-
-function canAttemptLogin(request: Request) {
-  const key =
-    request.headers.get('cf-connecting-ip') ||
-    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    'unknown';
-  const now = Date.now();
-  const current = loginWindows.get(key);
-  if (!current || current.resetAt <= now) {
-    loginWindows.set(key, { count: 1, resetAt: now + 10 * 60 * 1000 });
-    return true;
-  }
-  current.count += 1;
-  return current.count <= 10;
-}
-
 export async function POST(request: Request) {
-  if (!canAttemptLogin(request)) {
-    return publicError('Juda ko‘p kirish urinishi. 10 daqiqadan keyin qayta urinib ko‘ring.', 429);
+  if (!hasSameOrigin(request)) {
+    return publicError('Kirish so‘rovi manbasi tasdiqlanmadi.', 403);
+  }
+  if (!(await rateLimit(request, 'admin-login'))) {
+    return publicError(
+      'Juda ko‘p kirish urinishi. Bir daqiqadan keyin qayta urinib ko‘ring.',
+      429,
+    );
   }
   const contentLength = Number(request.headers.get('content-length') || 0);
   if (Number.isFinite(contentLength) && contentLength > 4096) {
@@ -39,29 +24,28 @@ export async function POST(request: Request) {
   } catch {
     return publicError('Kirish ma’lumotlari noto‘g‘ri yuborildi.', 400);
   }
-  const email = typeof input.email === 'string' ? input.email.slice(0, 254) : '';
+  const email =
+    typeof input.email === 'string' ? input.email.slice(0, 254) : '';
   const password =
     typeof input.password === 'string' ? input.password.slice(0, 256) : '';
   const admin = await adminFromCredentials(email, password);
   if (!admin) {
     return publicError('E-mail yoki maxfiy parol noto‘g‘ri.', 401);
   }
-  loginWindows.delete(
-    request.headers.get('cf-connecting-ip') ||
-      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-      'unknown',
-  );
   try {
     const response = jsonResponse({
       authenticated: true,
       viewer: {
         email: admin.email,
-        name: admin.fullName,
-        role: 'Bosh admin',
-        permissions: headAdminPermissions,
+        name: admin.name,
+        role: admin.role,
+        permissions: admin.permissions,
       },
     });
-    response.headers.append('Set-Cookie', await adminSessionCookie(admin.email));
+    response.headers.append(
+      'Set-Cookie',
+      await adminSessionCookie(admin.email),
+    );
     return response;
   } catch (error) {
     logServerError('[api/admin/login] Unable to create session', error);

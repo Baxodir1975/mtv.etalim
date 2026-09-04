@@ -1,5 +1,12 @@
 import { env } from 'cloudflare:workers';
-import { protectedHeadAdmins } from '@/lib/server-data';
+import {
+  getDatabase,
+  headAdminPermissions,
+  protectedHeadAdmins,
+  roleFromDb,
+  type RoleDbRow,
+  type RoleMember,
+} from '@/lib/server-data';
 
 type AuthEnvironment = {
   ADMIN_ACCESS_PASSWORD?: string;
@@ -19,10 +26,22 @@ type DeviceSessionPayload = {
   expiresAt: number;
 };
 
-type SessionPayload = AdminSessionPayload | DeviceSessionPayload;
+type GroupViewSessionPayload = {
+  kind: 'group-view';
+  group: string;
+  year: string;
+  month: string;
+  expiresAt: number;
+};
+
+type SessionPayload =
+  | AdminSessionPayload
+  | DeviceSessionPayload
+  | GroupViewSessionPayload;
 
 const adminCookieName = '__Host-mtv_etalimai_admin';
 const deviceCookieName = '__Host-mtv_etalimai_device';
+const groupViewCookieName = '__Host-mtv_etalimai_group_view';
 const encoder = new TextEncoder();
 
 function authEnvironment() {
@@ -121,21 +140,17 @@ async function passwordMatches(value: string) {
 
 export async function adminFromCredentials(email: string, password: string) {
   const normalizedEmail = email.trim().toLowerCase();
-  const admin = protectedHeadAdmins.find(
-    (candidate) => candidate.email.toLowerCase() === normalizedEmail,
-  );
-  if (!admin || !(await passwordMatches(password))) return null;
-  return admin;
+  if (!(await passwordMatches(password))) return null;
+  // The dashboard password is a shared deployment secret, so it may only
+  // authenticate the two explicitly protected head-admin identities. Other
+  // role records describe authorization, not verified identity.
+  return protectedMember(normalizedEmail);
 }
 
 export async function authenticatedAdmin(request: Request) {
   const payload = await verifiedToken(cookieValue(request, adminCookieName));
   if (!payload || payload.kind !== 'admin') return null;
-  return (
-    protectedHeadAdmins.find(
-      (candidate) => candidate.email.toLowerCase() === payload.email,
-    ) ?? null
-  );
+  return activeMemberByEmail(payload.email);
 }
 
 export async function deviceBinding(request: Request) {
@@ -143,8 +158,15 @@ export async function deviceBinding(request: Request) {
   return payload?.kind === 'device' ? payload : null;
 }
 
+export async function groupViewBinding(request: Request) {
+  const payload = await verifiedToken(
+    cookieValue(request, groupViewCookieName),
+  );
+  return payload?.kind === 'group-view' ? payload : null;
+}
+
 export async function adminSessionCookie(email: string) {
-  const maxAge = 7 * 24 * 60 * 60;
+  const maxAge = 8 * 60 * 60;
   const token = await signedToken({
     kind: 'admin',
     email: email.trim().toLowerCase(),
@@ -154,7 +176,7 @@ export async function adminSessionCookie(email: string) {
 }
 
 export async function deviceBindingCookie(listenerId: string, group: string) {
-  const maxAge = 365 * 24 * 60 * 60;
+  const maxAge = 30 * 24 * 60 * 60;
   const token = await signedToken({
     kind: 'device',
     listenerId,
@@ -164,10 +186,71 @@ export async function deviceBindingCookie(listenerId: string, group: string) {
   return `${deviceCookieName}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
 }
 
+export async function groupViewCookie(
+  group: string,
+  year: string,
+  month: string,
+) {
+  const maxAge = 60 * 60;
+  const token = await signedToken({
+    kind: 'group-view',
+    group,
+    year,
+    month,
+    expiresAt: Date.now() + maxAge * 1000,
+  });
+  return `${groupViewCookieName}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+}
+
 export function clearAdminSessionCookie() {
   return `${adminCookieName}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
 }
 
 export function clearDeviceBindingCookie() {
   return `${deviceCookieName}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+}
+
+export function clearGroupViewCookie() {
+  return `${groupViewCookieName}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
+}
+
+function protectedMember(email: string): RoleMember | null {
+  const admin = protectedHeadAdmins.find(
+    (candidate) => candidate.email.toLowerCase() === email,
+  );
+  if (!admin) return null;
+  const words = admin.fullName.split(/\s+/).filter(Boolean);
+  return {
+    id: admin.id,
+    initials: words
+      .slice(0, 2)
+      .map((word) => word[0] || '')
+      .join('')
+      .toUpperCase(),
+    name: admin.fullName,
+    email: admin.email,
+    role: 'Bosh admin',
+    active: true,
+    locked: true,
+    permissions: headAdminPermissions,
+  };
+}
+
+async function activeMemberByEmail(rawEmail: string) {
+  const email = rawEmail.trim().toLowerCase();
+  const lockedMember = protectedMember(email);
+  if (lockedMember) return lockedMember;
+  try {
+    const sql = getDatabase();
+    const rows = await sql`
+      SELECT id, full_name, email, role_name, is_active, is_locked, permissions
+      FROM role_members
+      WHERE LOWER(email) = ${email} AND is_active = TRUE
+      LIMIT 1
+    `;
+    const row = rows[0] as RoleDbRow | undefined;
+    return row ? roleFromDb(row) : null;
+  } catch {
+    return null;
+  }
 }
