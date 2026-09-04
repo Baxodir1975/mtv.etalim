@@ -204,6 +204,9 @@ const candidateGroups = [56, 57, 58, 59, 60, 61].map(
 );
 
 function listenerProgress(row: Partial<ListenerRecord>) {
+  if (row.status === 'Тўлиқ') {
+    return { completed: 15, total: 15, complete: true };
+  }
   const fields = [
     row.startDate,
     row.region,
@@ -466,6 +469,120 @@ const districtsByRegion: Record<string, string[]> = {
   ],
 };
 
+function AdminLogin({
+  loading = false,
+  error = '',
+  onAuthenticated,
+}: {
+  loading?: boolean;
+  error?: string;
+  onAuthenticated?: (viewer: AdminViewer) => void;
+}) {
+  const [email, setEmail] = useState<string>(protectedAdminAccounts[0].email);
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState(error);
+
+  useEffect(() => setMessage(error), [error]);
+
+  async function signIn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting || !onAuthenticated) return;
+    setSubmitting(true);
+    setMessage('');
+    try {
+      const response = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const result = (await response.json()) as {
+        authenticated?: boolean;
+        viewer?: AdminViewer;
+        error?: string;
+      };
+      if (!response.ok || !result.authenticated || !result.viewer) {
+        throw new Error(result.error || 'Bosh admin sifatida kirib bo‘lmadi.');
+      }
+      setPassword('');
+      onAuthenticated(result.viewer);
+    } catch (signInError) {
+      setMessage(
+        signInError instanceof Error
+          ? signInError.message
+          : 'Bosh admin sifatida kirib bo‘lmadi.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="admin-login-page">
+      <section className="admin-login-card" aria-busy={loading || submitting}>
+        <div className="admin-login-emblem" aria-hidden="true">
+          <img src="/imv-oquv-markazi.png" alt="" />
+        </div>
+        <p className="admin-login-kicker">MTV E-TA’LIM AI</p>
+        <h1>Bosh admin kirishi</h1>
+        <p className="admin-login-intro">
+          Tinglovchilarni kiritish, tahrirlash, o‘chirish va Word ro‘yxatini
+          olish uchun himoyalangan boshqaruv sahifasi.
+        </p>
+        {loading ? (
+          <div className="admin-login-loading" role="status">
+            <span aria-hidden="true" /> Sessiya tekshirilmoqda…
+          </div>
+        ) : (
+          <form onSubmit={signIn}>
+            <label>
+              <span>Bosh admin e-maili</span>
+              <select
+                name="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="username"
+              >
+                {protectedAdminAccounts.map((admin) => (
+                  <option key={admin.email} value={admin.email}>
+                    {admin.email}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Maxfiy parol</span>
+              <input
+                name="password"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+                required
+                minLength={12}
+                placeholder="Maxfiy parolni kiriting"
+              />
+            </label>
+            {message && (
+              <div className="admin-login-error" role="alert">
+                ! {message}
+              </div>
+            )}
+            <button type="submit" disabled={submitting || password.length < 12}>
+              {submitting ? 'TEKSHIRILMOQDA…' : 'BOSH ADMIN SIFATIDA KIRISH'}
+            </button>
+          </form>
+        )}
+        <a href="/?section=form">← Ommaviy tinglovchi formasiga qaytish</a>
+        <small>
+          Sessiya 7 kun davomida ushbu brauzerning himoyalangan cookie faylida
+          saqlanadi.
+        </small>
+      </section>
+    </main>
+  );
+}
+
 export default function Home() {
   const [activeSection, setActiveSection] = useState<SectionId>('listeners');
   const [listenerMenuOpen, setListenerMenuOpen] = useState(true);
@@ -477,6 +594,7 @@ export default function Home() {
   );
   const [deviceGroup, setDeviceGroup] = useState('');
   const [deviceListenerId, setDeviceListenerId] = useState('');
+  const [deviceBindingVerified, setDeviceBindingVerified] = useState(false);
   const [roleMembers, setRoleMembers] = useState<RoleMember[]>(
     defaultRoleMembers,
   );
@@ -484,12 +602,15 @@ export default function Home() {
   const [serverLoading, setServerLoading] = useState(true);
   const [serverError, setServerError] = useState('');
   const [adminEntry, setAdminEntry] = useState(false);
+  const [routeReady, setRouteReady] = useState(false);
   const [adminViewer, setAdminViewer] = useState<AdminViewer | null>(null);
+  const [adminSessionChecked, setAdminSessionChecked] = useState(false);
   const [adminSessionError, setAdminSessionError] = useState('');
   const [adminEditingListener, setAdminEditingListener] =
     useState<ListenerRecord | null>(null);
 
   useEffect(() => {
+    setAdminEntry(window.location.pathname.startsWith('/admin'));
     const requestedSection = new URLSearchParams(window.location.search).get(
       'section',
     ) as SectionId | null;
@@ -498,10 +619,14 @@ export default function Home() {
       navigation.some((item) => item.id === requestedSection)
     )
       setActiveSection(requestedSection);
+    setRouteReady(true);
   }, []);
 
   useEffect(() => {
-    if (!window.location.pathname.startsWith('/admin')) return;
+    if (!window.location.pathname.startsWith('/admin')) {
+      setAdminSessionChecked(true);
+      return;
+    }
     setAdminEntry(true);
     const controller = new AbortController();
     void (async () => {
@@ -515,6 +640,11 @@ export default function Home() {
           viewer?: AdminViewer;
           error?: string;
         };
+        if (response.status === 401) {
+          setAdminViewer(null);
+          setAdminSessionError('');
+          return;
+        }
         if (!response.ok || !result.authenticated || !result.viewer) {
           throw new Error(result.error || 'Bosh admin sessiyasi tasdiqlanmadi.');
         }
@@ -528,12 +658,19 @@ export default function Home() {
             ? error.message
             : 'Bosh admin sessiyasi tasdiqlanmadi.',
         );
+      } finally {
+        if (!controller.signal.aborted) setAdminSessionChecked(true);
       }
     })();
     return () => controller.abort();
   }, []);
 
   useEffect(() => {
+    if (!routeReady || !adminSessionChecked) return;
+    if (adminEntry && (!adminSessionChecked || !adminViewer)) {
+      setServerLoading(false);
+      return;
+    }
     const legacyListeners = readStored<ListenerRecord[]>(
       STORAGE_KEYS.legacyListeners,
       [],
@@ -556,10 +693,32 @@ export default function Home() {
     const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch('/api/state', {
-          cache: 'no-store',
-          signal: controller.signal,
-        });
+        const [response, deviceResponse] = await Promise.all([
+          fetch('/api/state', {
+            cache: 'no-store',
+            signal: controller.signal,
+          }),
+          fetch('/api/device/session', {
+            cache: 'no-store',
+            signal: controller.signal,
+          }),
+        ]);
+        if (deviceResponse.ok && !adminViewer) {
+          const deviceResult = (await deviceResponse.json()) as {
+            bound?: boolean;
+            listenerId?: string;
+            group?: string;
+          };
+          if (deviceResult.bound && deviceResult.listenerId && deviceResult.group) {
+            setDeviceGroup(deviceResult.group);
+            setDeviceListenerId(deviceResult.listenerId);
+            setDeviceBindingVerified(true);
+          } else {
+            setDeviceGroup('');
+            setDeviceListenerId('');
+            setDeviceBindingVerified(false);
+          }
+        }
         let result = (await response.json()) as {
           error?: string;
           listeners?: ListenerRecord[];
@@ -681,7 +840,7 @@ export default function Home() {
     })();
 
     return () => controller.abort();
-  }, []);
+  }, [adminEntry, adminSessionChecked, adminViewer, routeReady]);
 
   useEffect(() => {
     if (!storageReady) return;
@@ -715,6 +874,23 @@ export default function Home() {
   const profileInitials = adminViewer
     ? initialsFor(adminViewer.name)
     : 'T';
+
+  if (!routeReady || (adminEntry && !adminSessionChecked)) {
+    return <AdminLogin loading />;
+  }
+
+  if (adminEntry && !adminViewer) {
+    return (
+      <AdminLogin
+        error={adminSessionError}
+        onAuthenticated={(viewer) => {
+          setAdminViewer(viewer);
+          setAdminSessionError('');
+          setServerLoading(true);
+        }}
+      />
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -836,7 +1012,33 @@ export default function Home() {
             <span>{profileEmail}</span>
             <small>{adminViewer ? 'Bosh admin' : 'Tinglovchi'}</small>
           </div>
-          <button aria-label="Akkaunt">•••</button>
+          <button
+            aria-label={adminViewer ? 'Bosh admin sessiyasidan chiqish' : 'Akkaunt'}
+            title={adminViewer ? 'Chiqish' : 'Akkaunt'}
+            onClick={() => {
+              if (!adminViewer) {
+                window.location.href = '/admin?section=listeners';
+                return;
+              }
+              void (async () => {
+                try {
+                  const response = await fetch('/api/admin/logout', {
+                    method: 'POST',
+                  });
+                  if (!response.ok) throw new Error();
+                  setAdminViewer(null);
+                  setAdminSessionError('');
+                  setAdminSessionChecked(true);
+                } catch {
+                  setServerError(
+                    'Bosh admin sessiyasidan chiqib bo‘lmadi. Internetni tekshiring.',
+                  );
+                }
+              })();
+            }}
+          >
+            {adminViewer ? '↪' : '•••'}
+          </button>
         </div>
       </aside>
 
@@ -872,11 +1074,6 @@ export default function Home() {
                 : `Ma’lumotlar bazasi: ${serverError}`}
             </div>
           )}
-          {adminEntry && adminSessionError && (
-            <div className="server-state error" role="alert">
-              Bosh admin kirishi: {adminSessionError}
-            </div>
-          )}
           {activeSection === 'listeners' && (
             <ListenersPanel
               rows={listeners}
@@ -910,7 +1107,9 @@ export default function Home() {
             <ListenerForm
               rows={listeners}
               telegramGroupUrl={telegramGroupUrl}
-              lockedGroup={deviceGroup}
+              lockedGroup={deviceBindingVerified ? deviceGroup : ''}
+              ownerListenerId={deviceListenerId}
+              deviceBindingVerified={deviceBindingVerified}
               canSelectAnyGroup={canSelectAnyGroup}
               initialEditingRecord={adminEditingListener}
               onCancel={() => {
@@ -948,6 +1147,7 @@ export default function Home() {
                 if (!canSelectAnyGroup && !editingId && listener.group) {
                   setDeviceGroup(listener.group);
                   setDeviceListenerId(record.id);
+                  setDeviceBindingVerified(true);
                 }
                 setServerError('');
                 setAdminEditingListener(null);
@@ -1182,9 +1382,11 @@ function ListenersPanel({
                     <path d="M16 17v2a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h1" />
                   </svg>
                 </button>
-                <button type="button" onClick={() => setTelegramEditing(true)}>
-                  ✎ TAHRIRLASH
-                </button>
+                {canManageListeners && (
+                  <button type="button" onClick={() => setTelegramEditing(true)}>
+                    ✎ TAHRIRLASH
+                  </button>
+                )}
               </div>
             </article>
           ) : (
@@ -1518,6 +1720,8 @@ function ListenerForm({
   rows,
   telegramGroupUrl,
   lockedGroup,
+  ownerListenerId,
+  deviceBindingVerified,
   canSelectAnyGroup,
   initialEditingRecord,
   onSave,
@@ -1526,6 +1730,8 @@ function ListenerForm({
   rows: ListenerRecord[];
   telegramGroupUrl: string;
   lockedGroup: string;
+  ownerListenerId: string;
+  deviceBindingVerified: boolean;
   canSelectAnyGroup: boolean;
   initialEditingRecord: ListenerRecord | null;
   onSave: (
@@ -1556,6 +1762,7 @@ function ListenerForm({
   const [phoneDigits, setPhoneDigits] = useState(
     initialEditingRecord?.phone.replace(/\D/g, '').slice(-9) || '',
   );
+  const [lookingUpGroup, setLookingUpGroup] = useState(false);
   const [groupPreviewOpen, setGroupPreviewOpen] = useState(false);
   const [cardsOnly, setCardsOnly] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(
@@ -1568,12 +1775,15 @@ function ListenerForm({
 
   const matchedListener = useMemo(
     () =>
+      (deviceBindingVerified
+        ? rows.find((row) => row.id === ownerListenerId)
+        : undefined) ??
       rows.find(
         (row) =>
           row.phone.replace(/\D/g, '').slice(-9) === phoneDigits &&
           phoneDigits.length === 9,
       ),
-    [rows, phoneDigits],
+    [deviceBindingVerified, ownerListenerId, rows, phoneDigits],
   );
   const detectedGroup = matchedListener?.group || selectedGroup;
   const detectedGroupRows = useMemo(
@@ -1599,8 +1809,38 @@ function ListenerForm({
     }
   }, [canSelectAnyGroup, editingRecord, lockedGroup]);
 
-  function openGroupPreview() {
-    if (!detectedGroup) {
+  async function openGroupPreview() {
+    let previewGroup = detectedGroup;
+    if (!previewGroup && phoneDigits.length === 9) {
+      setLookingUpGroup(true);
+      try {
+        const response = await fetch('/api/listeners/lookup', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ phone: phoneDigits }),
+        });
+        const result = (await response.json()) as {
+          found?: boolean;
+          group?: string;
+          error?: string;
+        };
+        if (!response.ok) throw new Error(result.error || 'Guruh aniqlanmadi.');
+        if (result.found && result.group) {
+          previewGroup = result.group;
+          setSelectedGroup(result.group);
+        }
+      } catch (lookupError) {
+        setError(
+          lookupError instanceof Error
+            ? lookupError.message
+            : 'Guruhni aniqlab bo‘lmadi.',
+        );
+        return;
+      } finally {
+        setLookingUpGroup(false);
+      }
+    }
+    if (!previewGroup) {
       setError(
         'Avval guruhni tanlang yoki avval ro‘yxatdan o‘tgan telefon raqamini kiriting.',
       );
@@ -1787,8 +2027,12 @@ function ListenerForm({
                 placeholder="Guruh: avtomatik to‘ldiriladi"
                 aria-label="Telefon yoki tanlov bo‘yicha aniqlangan guruh"
               />
-              <button type="button" onClick={openGroupPreview}>
-                👁 Ko‘rish
+              <button
+                type="button"
+                disabled={lookingUpGroup}
+                onClick={() => void openGroupPreview()}
+              >
+                {lookingUpGroup ? '… Tekshirilmoqda' : '👁 Ko‘rish'}
               </button>
             </div>
             <a
@@ -1850,7 +2094,8 @@ function ListenerForm({
                 <div className="form-group-members listener-card-list">
                   {detectedGroupRows.map((row) => {
                     const progress = listenerProgress(row);
-                    const isMe = matchedListener?.id === row.id;
+                    const isMe =
+                      deviceBindingVerified && ownerListenerId === row.id;
                     return (
                       <article
                         className={`listener-member-card ${progress.complete ? 'complete' : 'incomplete'} ${isMe ? 'is-me' : ''}`}
@@ -1936,7 +2181,9 @@ function ListenerForm({
                             <span>
                               To‘ldirilgan {progress.completed}/{progress.total}
                             </span>
-                            {(canSelectAnyGroup || isMe) && (
+                            {(canSelectAnyGroup ||
+                              (deviceBindingVerified &&
+                                ownerListenerId === row.id)) && (
                               <button
                                 type="button"
                                 onClick={() => editRecord(row)}

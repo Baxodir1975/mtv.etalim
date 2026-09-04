@@ -5,16 +5,20 @@ import {
   listenerFromDb,
   logServerError,
   publicError,
+  publicListenerFromDb,
   protectedHeadAdmins,
   roleFromDb,
   type ListenerDbRow,
   type RoleDbRow,
 } from '@/lib/server-data';
+import { authenticatedAdmin, deviceBinding } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const admin = await authenticatedAdmin(request);
+    const binding = admin ? null : await deviceBinding(request);
     const sql = getDatabase();
     const permissionJson = JSON.stringify(headAdminPermissions);
 
@@ -87,8 +91,12 @@ export async function GET() {
           : '';
 
     return jsonResponse({
-      listeners: (listenerRows as ListenerDbRow[]).map(listenerFromDb),
-      roles: (roleRows as RoleDbRow[]).map(roleFromDb),
+      listeners: (listenerRows as ListenerDbRow[]).map((row) =>
+        admin || binding?.listenerId === row.id
+          ? listenerFromDb(row)
+          : publicListenerFromDb(row),
+      ),
+      roles: admin ? (roleRows as RoleDbRow[]).map(roleFromDb) : [],
       telegramGroupUrl:
         telegramGroupUrl || 'https://t.me/+HQ9koTozY_gxMGRi',
     });

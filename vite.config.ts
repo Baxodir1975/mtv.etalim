@@ -15,6 +15,13 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 const localBindingConfig = {
   main: 'vinext/server/fetch-handler',
   compatibility_flags: ['nodejs_compat'],
+  ratelimits: [
+    {
+      name: 'REGISTRATION_RATE_LIMITER',
+      namespace_id: '1001',
+      simple: { limit: 5, period: 60 as const },
+    },
+  ],
   routes: [
     {
       pattern: 'mtv.etalimai.uz',

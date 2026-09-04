@@ -6,6 +6,12 @@ import {
   publicError,
   type ListenerDbRow,
 } from '@/lib/server-data';
+import {
+  authenticatedAdmin,
+  deviceBinding,
+  deviceBindingCookie,
+} from '@/lib/auth';
+import { env } from 'cloudflare:workers';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,10 +21,30 @@ const allowedGroups = new Set(
   ),
 );
 
+type RegistrationRateLimiter = {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+};
+
+type ListenerEnvironment = {
+  REGISTRATION_RATE_LIMITER?: RegistrationRateLimiter;
+};
+
+async function canSubmitListener(request: Request) {
+  const limiter = (env as unknown as ListenerEnvironment)
+    .REGISTRATION_RATE_LIMITER;
+  if (!limiter) return false;
+  const ip =
+    request.headers.get('cf-connecting-ip') ||
+    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    'unknown';
+  const result = await limiter.limit({ key: `listener-write:${ip}` });
+  return result.success;
+}
+
 const uploadRules = {
   photo: {
     kinds: new Set(['image/jpeg', 'image/png', 'image/webp']),
-    maxBytes: 4 * 1024 * 1024,
+    maxBytes: 2 * 1024 * 1024,
   },
   order: {
     kinds: new Set([
@@ -27,15 +53,15 @@ const uploadRules = {
       'image/png',
       'image/webp',
     ]),
-    maxBytes: 6 * 1024 * 1024,
+    maxBytes: 3 * 1024 * 1024,
   },
   passportFront: {
     kinds: new Set(['image/jpeg', 'image/png', 'image/webp']),
-    maxBytes: 5 * 1024 * 1024,
+    maxBytes: 2 * 1024 * 1024,
   },
   passportBack: {
     kinds: new Set(['image/jpeg', 'image/png', 'image/webp']),
-    maxBytes: 5 * 1024 * 1024,
+    maxBytes: 2 * 1024 * 1024,
   },
 } as const;
 
@@ -105,8 +131,8 @@ async function validateUploads(files: Partial<Record<UploadField, File>>) {
       throw new Error(`${file.name}: fayl mazmuni uning turiga mos emas.`);
     }
   }
-  if (totalBytes > 16 * 1024 * 1024) {
-    throw new Error('Yuklanayotgan fayllarning umumiy hajmi 16 MB dan oshmasin.');
+  if (totalBytes > 8 * 1024 * 1024) {
+    throw new Error('Yuklanayotgan fayllarning umumiy hajmi 8 MB dan oshmasin.');
   }
 }
 
@@ -116,9 +142,17 @@ function safeFileName(name: string) {
 
 export async function POST(request: Request) {
   try {
+    const admin = await authenticatedAdmin(request);
+    let binding = admin ? null : await deviceBinding(request);
+    if (!admin && !(await canSubmitListener(request))) {
+      return publicError(
+        'Juda ko‘p saqlash urinishi. Bir daqiqadan keyin qayta urinib ko‘ring.',
+        429,
+      );
+    }
     const contentLength = Number(request.headers.get('content-length') || 0);
-    if (Number.isFinite(contentLength) && contentLength > 17 * 1024 * 1024) {
-      return publicError('Yuklanayotgan ma’lumotlar hajmi 17 MB dan oshmasin.', 413);
+    if (Number.isFinite(contentLength) && contentLength > 9 * 1024 * 1024) {
+      return publicError('Yuklanayotgan ma’lumotlar hajmi 9 MB dan oshmasin.', 413);
     }
     const form = await request.formData();
     const rawPayload = form.get('payload');
@@ -137,7 +171,7 @@ export async function POST(request: Request) {
     const editingId =
       typeof editingValue === 'string' ? editingValue.trim() : '';
     const phone = phoneDigits(input.phone);
-    const group = text(input, 'group', 100);
+    let group = text(input, 'group', 100);
     const category = text(input, 'category', 100);
     const region = text(input, 'region', 120);
     const district = text(input, 'district', 120);
@@ -168,6 +202,29 @@ export async function POST(request: Request) {
     }
 
     const sql = getDatabase();
+    if (!admin && binding) {
+      const boundRows = await sql`
+        SELECT id FROM listeners WHERE id = ${binding.listenerId} LIMIT 1
+      `;
+      if (!boundRows.length) binding = null;
+    }
+
+    if (!admin) {
+      if (editingId) {
+        if (!binding || binding.listenerId !== editingId) {
+          return publicError(
+            'Faqat shu qurilmadan ro‘yxatdan o‘tgan tinglovchini tahrirlash mumkin.',
+            403,
+          );
+        }
+      } else if (binding) {
+        return publicError(
+          'Bu qurilma avval ro‘yxatdan o‘tgan. “Ko‘rish” orqali kartochkangizni oching.',
+          409,
+        );
+      }
+    }
+
     const currentRows = editingId
       ? await sql`
           SELECT
@@ -195,6 +252,12 @@ export async function POST(request: Request) {
 
     if (editingId && !current) {
       return publicError('Tahrirlanayotgan tinglovchi topilmadi.', 404);
+    }
+    if (!admin && editingId && binding && current) {
+      // An admin may have moved this listener after the device cookie was
+      // issued. Preserve the database group and refresh the cookie instead of
+      // allowing a stale browser to move the listener back.
+      group = current.group_name;
     }
     if (!editingId && current) {
       return publicError(
@@ -233,6 +296,9 @@ export async function POST(request: Request) {
     }
 
     const id = current?.id || crypto.randomUUID();
+    const preparedDeviceCookie = admin
+      ? ''
+      : await deviceBindingCookie(id, group);
     const objectKeys = {
       photo: current?.photo_url || '',
       order: current?.order_file_url || '',
@@ -277,82 +343,106 @@ export async function POST(request: Request) {
       ? 'Тўлиқ'
       : 'Тўлдирилмаган';
 
-    const transactionResults = await sql.transaction((tx) => [
-      tx`
-        INSERT INTO listeners (
-          id, phone_digits, start_date, training_year, category, group_name,
-          initials, surname, first_name, patronymic, full_name, workplace,
-          region, district, position, birth_date, note, registration_status,
-          photo_url, order_file_url, passport_front_url, passport_back_url
-        ) VALUES (
-          ${id}, ${phone}, ${startDate || null}, ${trainingYear}, ${category}, ${group},
-          ${initials}, ${surname}, ${firstName}, ${patronymic}, ${fullName}, ${workplace},
-          ${region}, ${district}, ${position}, ${birthDate || null}, ${note},
-          ${registrationStatus}, ${objectKeys.photo}, ${objectKeys.order},
-          ${objectKeys.passportFront}, ${objectKeys.passportBack}
-        )
-        ON CONFLICT (id) DO UPDATE SET
-          phone_digits = EXCLUDED.phone_digits,
-          start_date = EXCLUDED.start_date,
-          training_year = EXCLUDED.training_year,
-          category = EXCLUDED.category,
-          group_name = EXCLUDED.group_name,
-          initials = EXCLUDED.initials,
-          surname = EXCLUDED.surname,
-          first_name = EXCLUDED.first_name,
-          patronymic = EXCLUDED.patronymic,
-          full_name = EXCLUDED.full_name,
-          workplace = EXCLUDED.workplace,
-          region = EXCLUDED.region,
-          district = EXCLUDED.district,
-          position = EXCLUDED.position,
-          birth_date = EXCLUDED.birth_date,
-          note = EXCLUDED.note,
-          registration_status = EXCLUDED.registration_status,
-          photo_url = EXCLUDED.photo_url,
-          order_file_url = EXCLUDED.order_file_url,
-          passport_front_url = EXCLUDED.passport_front_url,
-          passport_back_url = EXCLUDED.passport_back_url,
-          updated_at = NOW()
-        RETURNING
-          id, phone_digits, start_date, training_year, category, group_name,
-          initials, surname, first_name, patronymic, full_name, workplace,
-          region, district, position, birth_date, note, registration_status,
-          photo_url, order_file_url, passport_front_url, passport_back_url,
-          created_at, updated_at
-      `,
-      ...storedFiles
-        .filter((file): file is NonNullable<typeof file> => Boolean(file))
-        .map(
-          (file) => tx`
-            INSERT INTO listener_files (
-              listener_id, file_kind, original_name, mime_type, file_size,
-              file_bytes
-            ) VALUES (
-              ${id}, ${file.field}, ${file.name}, ${file.type}, ${file.size},
-              ${file.bytes}
-            )
-            ON CONFLICT (listener_id, file_kind) DO UPDATE SET
-              original_name = EXCLUDED.original_name,
-              mime_type = EXCLUDED.mime_type,
-              file_size = EXCLUDED.file_size,
-              file_bytes = EXCLUDED.file_bytes,
+    const transactionResults = await sql.transaction((tx) => {
+      const listenerWrite = editingId
+        ? tx`
+            UPDATE listeners SET
+              phone_digits = ${phone},
+              start_date = ${startDate || null},
+              training_year = ${trainingYear},
+              category = ${category},
+              group_name = ${group},
+              initials = ${initials},
+              surname = ${surname},
+              first_name = ${firstName},
+              patronymic = ${patronymic},
+              full_name = ${fullName},
+              workplace = ${workplace},
+              region = ${region},
+              district = ${district},
+              position = ${position},
+              birth_date = ${birthDate || null},
+              note = ${note},
+              registration_status = ${registrationStatus},
+              photo_url = ${objectKeys.photo},
+              order_file_url = ${objectKeys.order},
+              passport_front_url = ${objectKeys.passportFront},
+              passport_back_url = ${objectKeys.passportBack},
               updated_at = NOW()
-          `,
-        ),
-    ]);
-    const savedRows = transactionResults[0];
+            WHERE id = ${id}
+            RETURNING
+              id, phone_digits, start_date, training_year, category, group_name,
+              initials, surname, first_name, patronymic, full_name, workplace,
+              region, district, position, birth_date, note, registration_status,
+              photo_url, order_file_url, passport_front_url, passport_back_url,
+              created_at, updated_at
+          `
+        : tx`
+            INSERT INTO listeners (
+              id, phone_digits, start_date, training_year, category, group_name,
+              initials, surname, first_name, patronymic, full_name, workplace,
+              region, district, position, birth_date, note, registration_status,
+              photo_url, order_file_url, passport_front_url, passport_back_url
+            ) VALUES (
+              ${id}, ${phone}, ${startDate || null}, ${trainingYear}, ${category}, ${group},
+              ${initials}, ${surname}, ${firstName}, ${patronymic}, ${fullName}, ${workplace},
+              ${region}, ${district}, ${position}, ${birthDate || null}, ${note},
+              ${registrationStatus}, ${objectKeys.photo}, ${objectKeys.order},
+              ${objectKeys.passportFront}, ${objectKeys.passportBack}
+            )
+            RETURNING
+              id, phone_digits, start_date, training_year, category, group_name,
+              initials, surname, first_name, patronymic, full_name, workplace,
+              region, district, position, birth_date, note, registration_status,
+              photo_url, order_file_url, passport_front_url, passport_back_url,
+              created_at, updated_at
+          `;
 
-    return jsonResponse(
+      return [
+        listenerWrite,
+        ...storedFiles
+          .filter((file): file is NonNullable<typeof file> => Boolean(file))
+          .map(
+            (file) => tx`
+              INSERT INTO listener_files (
+                listener_id, file_kind, original_name, mime_type, file_size,
+                file_bytes
+              ) VALUES (
+                ${id}, ${file.field}, ${file.name}, ${file.type}, ${file.size},
+                ${file.bytes}
+              )
+              ON CONFLICT (listener_id, file_kind) DO UPDATE SET
+                original_name = EXCLUDED.original_name,
+                mime_type = EXCLUDED.mime_type,
+                file_size = EXCLUDED.file_size,
+                file_bytes = EXCLUDED.file_bytes,
+                updated_at = NOW()
+            `,
+          ),
+      ];
+    });
+    const savedRows = transactionResults[0];
+    if (editingId && !savedRows.length) {
+      return publicError('Tahrirlanayotgan tinglovchi topilmadi.', 404);
+    }
+
+    const response = jsonResponse(
       { listener: listenerFromDb(savedRows[0] as ListenerDbRow) },
       current ? 200 : 201,
     );
+    if (!admin) {
+      response.headers.append('Set-Cookie', preparedDeviceCookie);
+    }
+    return response;
   } catch (error) {
     logServerError('[api/listeners] Unable to persist listener', error);
     const errorCode =
       typeof error === 'object' && error !== null && 'code' in error
         ? String((error as { code?: unknown }).code)
         : '';
+    if (errorCode === '23503') {
+      return publicError('Tahrirlanayotgan tinglovchi topilmadi.', 404);
+    }
     if (errorCode === '23505') {
       return publicError('Бу телефон рақами аввал рўйхатдан ўтган.', 409);
     }

@@ -128,6 +128,78 @@
   .access-list-toggle{min-height:44px;font-size:12px}
 }
 
+/* Protected Bosh admin entry. The public listener form never renders behind it. */
+.admin-login-page{
+  min-height:100vh;
+  display:grid;
+  place-items:center;
+  padding:28px 18px;
+  background:
+    radial-gradient(circle at 14% 12%,rgba(255,255,0,.22),transparent 30%),
+    radial-gradient(circle at 86% 88%,rgba(0,102,204,.18),transparent 34%),
+    linear-gradient(145deg,#eef7ff 0%,#f8fbff 54%,#eefaf4 100%);
+}
+.admin-login-card{
+  width:min(100%,460px);
+  display:grid;
+  gap:14px;
+  padding:32px;
+  border:1px solid #bed5e9;
+  border-top:5px solid #0066CC;
+  border-radius:20px;
+  background:#fff;
+  box-shadow:0 24px 70px rgba(27,70,115,.17);
+}
+.admin-login-emblem{
+  width:64px;
+  height:64px;
+  display:grid;
+  place-items:center;
+  overflow:hidden;
+  border:1px solid #c6d9e9;
+  border-radius:18px;
+  background:#f3f9ff;
+}
+.admin-login-emblem img{width:54px;height:54px;object-fit:contain}
+.admin-login-kicker{margin:0;color:#0066CC;font-size:10px;font-weight:850;letter-spacing:1.55px}
+.admin-login-card h1{margin:-5px 0 0;color:#173b60;font-size:28px;font-weight:760;line-height:1.08}
+.admin-login-intro{margin:0;color:#637a91;font-size:13px;line-height:1.55}
+.admin-login-card form{display:grid;gap:13px;margin-top:3px}
+.admin-login-card label{display:grid;gap:6px;color:#345a7d;font-size:10px;font-weight:800;letter-spacing:.35px;text-transform:uppercase}
+.admin-login-card input,.admin-login-card select{
+  width:100%;
+  min-height:46px;
+  padding:10px 12px;
+  border:1px solid #bdd0e2;
+  border-radius:10px;
+  background:#fff;
+  color:#173b60;
+  font:600 13px/1.2 Inter,"Segoe UI",sans-serif;
+  text-transform:none;
+}
+.admin-login-card input:focus,.admin-login-card select:focus{outline:3px solid rgba(0,102,204,.14);border-color:#0066CC}
+.admin-login-card form>button{
+  min-height:46px;
+  border:0;
+  border-radius:10px;
+  background:#0066CC;
+  color:#fff;
+  font-size:11px;
+  font-weight:850;
+  letter-spacing:.55px;
+  box-shadow:0 8px 18px rgba(0,102,204,.2);
+}
+.admin-login-card form>button:not(:disabled):hover{background:#0054a8;transform:translateY(-1px)}
+.admin-login-card form>button:disabled{cursor:not-allowed;opacity:.55}
+.admin-login-error{padding:10px 12px;border:1px solid #f2b6b6;border-radius:9px;background:#fff2f2;color:#a52525;font-size:11px;font-weight:650;line-height:1.45}
+.admin-login-loading{display:flex;min-height:58px;align-items:center;justify-content:center;gap:10px;border-radius:10px;background:#eef6ff;color:#315d88;font-size:12px;font-weight:700}
+.admin-login-loading span{width:18px;height:18px;border:2px solid #9ec4e8;border-top-color:#0066CC;border-radius:50%;animation:admin-login-spin .7s linear infinite}
+.admin-login-card>a{color:#245d92;font-size:11px;font-weight:700;text-decoration:none}
+.admin-login-card>a:hover{text-decoration:underline}
+.admin-login-card>small{padding-top:10px;border-top:1px solid #e1eaf2;color:#7b8d9d;font-size:9px;line-height:1.5}
+@keyframes admin-login-spin{to{transform:rotate(360deg)}}
+@media(max-width:520px){.admin-login-page{padding:16px}.admin-login-card{padding:24px 20px;border-radius:16px}.admin-login-card h1{font-size:24px}}
+
 @media(max-width:430px){
   .access-permission-groups{grid-template-columns:1fr}
   .access-permission-columns{grid-template-columns:1fr}

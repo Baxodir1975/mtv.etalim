@@ -73,21 +73,6 @@ export function isProtectedHeadAdmin(email: string) {
   );
 }
 
-export function cloudflareAccessAdmin(request: Request) {
-  const email = (
-    request.headers.get('cf-access-authenticated-user-email') ?? ''
-  )
-    .trim()
-    .toLowerCase();
-  const assertion = request.headers.get('cf-access-jwt-assertion');
-  if (!email || !assertion || !isProtectedHeadAdmin(email)) return null;
-  return (
-    protectedHeadAdmins.find(
-      (admin) => admin.email.toLowerCase() === email,
-    ) ?? null
-  );
-}
-
 export function getDatabase() {
   const databaseUrl = (env as unknown as MtvEnvironment).DATABASE_URL;
   if (!databaseUrl) {
@@ -172,6 +157,20 @@ export function listenerFromDb(row: ListenerDbRow) {
     // markers preserve completion/edit state while the object stays private.
     passportFront: row.passport_front_url ? 'saqlangan' : '',
     passportBack: row.passport_back_url ? 'saqlangan' : '',
+  };
+}
+
+export function publicListenerFromDb(row: ListenerDbRow) {
+  const listener = listenerFromDb(row);
+  const phoneSuffix = row.phone_digits.replace(/\D/g, '').slice(-2);
+  return {
+    ...listener,
+    phone: phoneSuffix ? `+998 ** *** ** ${phoneSuffix}` : '+998 ** *** ** **',
+    birthDate: '',
+    note: '',
+    orderFile: '',
+    passportFront: '',
+    passportBack: '',
   };
 }
 

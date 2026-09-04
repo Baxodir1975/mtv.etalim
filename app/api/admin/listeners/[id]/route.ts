@@ -1,10 +1,10 @@
 import {
-  cloudflareAccessAdmin,
   getDatabase,
   jsonResponse,
   logServerError,
   publicError,
 } from '@/lib/server-data';
+import { authenticatedAdmin } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +12,7 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!cloudflareAccessAdmin(request)) {
+  if (!(await authenticatedAdmin(request))) {
     return publicError('Faqat Bosh admin tinglovchini o‘chira oladi.', 403);
   }
 

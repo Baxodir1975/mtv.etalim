@@ -1,4 +1,5 @@
 import { getDatabase, logServerError, publicError } from '@/lib/server-data';
+import { authenticatedAdmin, deviceBinding } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -6,11 +7,18 @@ type RouteContext = {
   params: Promise<{ id: string; kind: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   try {
     const { id, kind } = await context.params;
     if (kind !== 'photo' && kind !== 'order') {
       return publicError('Fayl topilmadi.', 404);
+    }
+    if (kind === 'order') {
+      const admin = await authenticatedAdmin(request);
+      const binding = admin ? null : await deviceBinding(request);
+      if (!admin && binding?.listenerId !== id) {
+        return publicError('Bu hujjatni ko‘rish uchun ruxsat yo‘q.', 403);
+      }
     }
 
     const sql = getDatabase();

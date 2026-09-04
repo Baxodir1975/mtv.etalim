@@ -1,17 +1,14 @@
 import {
-  cloudflareAccessAdmin,
   headAdminPermissions,
   jsonResponse,
 } from '@/lib/server-data';
+import { authenticatedAdmin } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
-  const admin = cloudflareAccessAdmin(request);
+  const admin = await authenticatedAdmin(request);
 
-  // This endpoint is deployed behind a Cloudflare Access application.  Both
-  // the verified identity header and the Access assertion must be present;
-  // client-provided query strings/cookies are deliberately not accepted.
   if (!admin) {
     return jsonResponse(
       { authenticated: false, error: 'Bosh admin sessiyasi tasdiqlanmadi.' },
