@@ -2614,14 +2614,19 @@ function ListenerForm({
                         name="phone"
                         required
                         inputMode="numeric"
+                        autoComplete="tel-national"
                         maxLength={9}
                         pattern="[0-9]{9}"
                         placeholder="XX XXX XX XX"
-                        value={phoneDigits}
-                        onChange={(event) => {
-                          setPhoneDigits(
-                            event.target.value.replace(/\D/g, '').slice(0, 9),
-                          );
+                        defaultValue={phoneDigits}
+                        onInput={(event) => {
+                          const digits = event.currentTarget.value
+                            .replace(/\D/g, '')
+                            .slice(0, 9);
+                          if (event.currentTarget.value !== digits) {
+                            event.currentTarget.value = digits;
+                          }
+                          setPhoneDigits(digits);
                           setGroupPreviewOpen(false);
                         }}
                       />
