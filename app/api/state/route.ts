@@ -4,6 +4,7 @@ import {
   headAdminPermissions,
   jsonResponse,
   listenerFromDb,
+  logServerError,
   publicError,
   roleFromDb,
   type ListenerDbRow,
@@ -89,7 +90,7 @@ export async function GET() {
         telegramGroupUrl || 'https://t.me/+HQ9koTozY_gxMGRi',
     });
   } catch (error) {
-    console.error('[api/state] Unable to load persisted state', error);
+    logServerError('[api/state] Unable to load persisted state', error);
     return publicError(
       'Ma’lumotlar bazasi bilan aloqa o‘rnatilmadi. Birozdan keyin qayta urinib ko‘ring.',
       503,

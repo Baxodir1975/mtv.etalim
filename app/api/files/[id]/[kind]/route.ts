@@ -1,4 +1,4 @@
-import { getDatabase, publicError } from '@/lib/server-data';
+import { getDatabase, logServerError, publicError } from '@/lib/server-data';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,7 +46,7 @@ export async function GET(_request: Request, context: RouteContext) {
     );
     return new Response(bytes, { headers });
   } catch (error) {
-    console.error('[api/files] Unable to load file', error);
+    logServerError('[api/files] Unable to load file', error);
     return publicError('Faylni ochib bo‘lmadi.', 503);
   }
 }

@@ -2,6 +2,7 @@ import {
   getDatabase,
   jsonResponse,
   listenerFromDb,
+  logServerError,
   publicError,
   type ListenerDbRow,
 } from '@/lib/server-data';
@@ -347,7 +348,7 @@ export async function POST(request: Request) {
       current ? 200 : 201,
     );
   } catch (error) {
-    console.error('[api/listeners] Unable to persist listener', error);
+    logServerError('[api/listeners] Unable to persist listener', error);
     const errorCode =
       typeof error === 'object' && error !== null && 'code' in error
         ? String((error as { code?: unknown }).code)

@@ -186,3 +186,11 @@ export function jsonResponse(body: unknown, status = 200) {
 export function publicError(message: string, status: number) {
   return jsonResponse({ error: message }, status);
 }
+
+export function logServerError(scope: string, error: unknown) {
+  const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const sanitized = raw
+    .replace(/postgres(?:ql)?:\/\/\S+/gi, '[REDACTED_DATABASE_URL]')
+    .replace(/(DATABASE_URL\s*[=:]\s*)\S+/gi, '$1[REDACTED]');
+  console.error(scope, sanitized);
+}
