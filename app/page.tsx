@@ -2599,7 +2599,8 @@ function TermsPanel({ onOpenForm }: { onOpenForm: () => void }) {
         <p>TINGLOVCHI FORMASI · VALIDATEFORM</p>
         <h2>Ro‘yxatdan o‘tish shartlari</h2>
         <small>
-          Talablar moliya-svg/E-talim dagi forma tekshiruvlaridan aynan olindi.
+          Talablar moliya-svg/mtv.etalim loyihasining MTV uchun moslashtirilgan
+          forma tekshiruvlaridan olindi.
         </small>
       </header>
       <div className="terms-source-list">
