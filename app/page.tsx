@@ -35,6 +35,13 @@ type ListenerRecord = {
 
 type ListenerDraft = Omit<ListenerRecord, 'id' | 'status'>;
 
+type ListenerUploads = {
+  photo?: File;
+  order?: File;
+  passportFront?: File;
+  passportBack?: File;
+};
+
 type AccessRole = 'Bosh admin' | 'Admin' | 'Foydalanuvchi' | 'Ko‘ruvchi';
 
 type RoleMember = {
@@ -49,11 +56,12 @@ type RoleMember = {
 };
 
 const STORAGE_KEYS = {
-  listeners: 'mtv-etalimai.listeners.v3',
   telegram: 'mtv-etalimai.telegram.v1',
   deviceGroup: 'mtv-etalimai.device-group.v1',
   deviceListener: 'mtv-etalimai.device-listener.v1',
   roles: 'mtv-etalimai.roles.v2',
+  legacyListeners: 'mtv-etalimai.listeners.v3',
+  legacyMigration: 'mtv-etalimai.neon-migration.v1',
 };
 
 const adminEmail = 'ilxomovb2023@gmail.com';
@@ -95,6 +103,39 @@ function saveStored(key: string, value: unknown) {
     window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // Browser storage may be unavailable or full; the current page remains usable.
+  }
+}
+
+function normalizedPhone(value: unknown) {
+  return typeof value === 'string'
+    ? value.replace(/\D/g, '').slice(-9)
+    : '';
+}
+
+function legacyDataUrlFile(value: unknown, baseName: string) {
+  if (typeof value !== 'string') return undefined;
+  const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(value);
+  if (!match) return undefined;
+  try {
+    const binary = window.atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const extensions: Record<string, string> = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp',
+      'application/pdf': 'pdf',
+    };
+    const mimeType = match[1].toLowerCase();
+    return new File(
+      [bytes],
+      `${baseName}.${extensions[mimeType] || 'bin'}`,
+      { type: mimeType },
+    );
+  } catch {
+    return undefined;
   }
 }
 
@@ -390,7 +431,7 @@ export default function Home() {
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const [listeners, setListeners] = useState<ListenerRecord[]>(listenerRows);
   const [telegramGroupUrl, setTelegramGroupUrl] = useState(
-    'https://t.me/+KjvJ7LUjdmY3MDhi',
+    'https://t.me/+HQ9koTozY_gxMGRi',
   );
   const [deviceGroup, setDeviceGroup] = useState('');
   const [deviceListenerId, setDeviceListenerId] = useState('');
@@ -398,6 +439,8 @@ export default function Home() {
     defaultRoleMembers,
   );
   const [storageReady, setStorageReady] = useState(false);
+  const [serverLoading, setServerLoading] = useState(true);
+  const [serverError, setServerError] = useState('');
 
   useEffect(() => {
     const requestedSection = new URLSearchParams(window.location.search).get(
@@ -411,11 +454,14 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    setListeners(readStored<ListenerRecord[]>(STORAGE_KEYS.listeners, []));
+    const legacyListeners = readStored<ListenerRecord[]>(
+      STORAGE_KEYS.legacyListeners,
+      [],
+    );
     setTelegramGroupUrl(
       readStored<string>(
         STORAGE_KEYS.telegram,
-        'https://t.me/+KjvJ7LUjdmY3MDhi',
+        'https://t.me/+HQ9koTozY_gxMGRi',
       ),
     );
     setDeviceGroup(readStored<string>(STORAGE_KEYS.deviceGroup, ''));
@@ -443,12 +489,153 @@ export default function Home() {
         : defaultRoleMembers,
     );
     setStorageReady(true);
-  }, []);
 
-  useEffect(() => {
-    if (!storageReady) return;
-    saveStored(STORAGE_KEYS.listeners, listeners);
-  }, [listeners, storageReady]);
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch('/api/state', {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        let result = (await response.json()) as {
+          error?: string;
+          listeners?: ListenerRecord[];
+          roles?: RoleMember[];
+          telegramGroupUrl?: string;
+        };
+        if (!response.ok) {
+          throw new Error(result.error || 'Ma’lumotlarni yuklab bo‘lmadi.');
+        }
+        let serverListeners = Array.isArray(result.listeners)
+          ? result.listeners
+          : [];
+        let migrationFailures = 0;
+        const migrationAlreadyCompleted = readStored<boolean>(
+          STORAGE_KEYS.legacyMigration,
+          false,
+        );
+        if (
+          !migrationAlreadyCompleted &&
+          Array.isArray(legacyListeners) &&
+          legacyListeners.length
+        ) {
+          const serverPhones = new Set(
+            serverListeners.map((listener) => normalizedPhone(listener.phone)),
+          );
+          let serverChanged = false;
+
+          for (const legacy of legacyListeners) {
+            const phone = normalizedPhone(legacy?.phone);
+            if (!phone || serverPhones.has(phone)) continue;
+
+            const { id: _legacyId, status: _legacyStatus, ...legacyDraft } =
+              legacy;
+            const payload = new FormData();
+            payload.set(
+              'payload',
+              JSON.stringify({
+                ...legacyDraft,
+                photo: '',
+                orderFile: '',
+                passportFront: '',
+                passportBack: '',
+              }),
+            );
+            const legacyFiles: ListenerUploads = {
+              photo: legacyDataUrlFile(legacy.photo, `photo-${phone}`),
+              order: legacyDataUrlFile(legacy.orderFile, `order-${phone}`),
+              passportFront: legacyDataUrlFile(
+                legacy.passportFront,
+                `passport-front-${phone}`,
+              ),
+              passportBack: legacyDataUrlFile(
+                legacy.passportBack,
+                `passport-back-${phone}`,
+              ),
+            };
+            for (const [field, file] of Object.entries(legacyFiles)) {
+              if (file) payload.set(field, file);
+            }
+
+            try {
+              const migrationResponse = await fetch('/api/listeners', {
+                method: 'POST',
+                body: payload,
+                signal: controller.signal,
+              });
+              if (migrationResponse.ok || migrationResponse.status === 409) {
+                serverPhones.add(phone);
+                serverChanged = serverChanged || migrationResponse.ok;
+              } else {
+                migrationFailures += 1;
+              }
+            } catch {
+              if (controller.signal.aborted) return;
+              migrationFailures += 1;
+            }
+          }
+
+          if (serverChanged) {
+            const refreshedResponse = await fetch('/api/state', {
+              cache: 'no-store',
+              signal: controller.signal,
+            });
+            const refreshedResult = (await refreshedResponse.json()) as typeof result;
+            if (refreshedResponse.ok) {
+              result = refreshedResult;
+              serverListeners = Array.isArray(result.listeners)
+                ? result.listeners
+                : serverListeners;
+            }
+          }
+          if (!migrationFailures) {
+            saveStored(STORAGE_KEYS.legacyMigration, true);
+          }
+        }
+
+        setListeners(serverListeners);
+        if (result.telegramGroupUrl) {
+          setTelegramGroupUrl(result.telegramGroupUrl);
+        }
+        if (Array.isArray(result.roles) && result.roles.length) {
+          const serverHasAdmin = result.roles.some(
+            (member) => member.email.toLowerCase() === adminEmail,
+          );
+          setRoleMembers(
+            serverHasAdmin
+              ? result.roles.map((member) =>
+                  member.email.toLowerCase() === adminEmail
+                    ? {
+                        ...member,
+                        role: 'Bosh admin',
+                        active: true,
+                        locked: true,
+                        permissions: defaultRoleMembers[0].permissions,
+                      }
+                    : member,
+                )
+              : [defaultRoleMembers[0], ...result.roles],
+          );
+        }
+        setServerError(
+          migrationFailures
+            ? `${migrationFailures} ta eski tinglovchi Neon bazasiga ko‘chirilmadi. Forma ma’lumotlarini tekshirib, qayta urinib ko‘ring.`
+            : '',
+        );
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setServerError(
+          error instanceof Error
+            ? error.message
+            : 'Ma’lumotlar bazasi bilan aloqa o‘rnatilmadi.',
+        );
+      } finally {
+        if (!controller.signal.aborted) setServerLoading(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     if (!storageReady) return;
@@ -622,6 +809,16 @@ export default function Home() {
           </div>
         </header>
         <div className="content">
+          {(serverLoading || serverError) && (
+            <div
+              className={serverError ? 'server-state error' : 'server-state'}
+              role={serverError ? 'alert' : 'status'}
+            >
+              {serverLoading
+                ? 'Ma’lumotlar bazasi yuklanmoqda…'
+                : `Ma’lumotlar bazasi: ${serverError}`}
+            </div>
+          )}
           {activeSection === 'listeners' && (
             <ListenersPanel
               rows={listeners}
@@ -636,14 +833,27 @@ export default function Home() {
               telegramGroupUrl={telegramGroupUrl}
               lockedGroup={deviceGroup}
               onCancel={() => openSection('listeners')}
-              onSave={(listener, editingId) => {
-                const id =
-                  editingId ||
-                  (window.crypto?.randomUUID?.() ?? String(Date.now()));
-                const record = { ...listener, id, status: '' };
-                record.status = listenerProgress(record).complete
-                  ? 'Тўлиқ'
-                  : 'Тўлдирилмаган';
+              onSave={async (listener, files, editingId) => {
+                const payload = new FormData();
+                payload.set('payload', JSON.stringify(listener));
+                if (editingId) payload.set('editingId', editingId);
+                for (const [field, file] of Object.entries(files)) {
+                  if (file) payload.set(field, file);
+                }
+                const response = await fetch('/api/listeners', {
+                  method: 'POST',
+                  body: payload,
+                });
+                const result = (await response.json()) as {
+                  error?: string;
+                  listener?: ListenerRecord;
+                };
+                if (!response.ok || !result.listener) {
+                  throw new Error(
+                    result.error || 'Ma’lumotlar bazasiga saqlab bo‘lmadi.',
+                  );
+                }
+                const record = result.listener;
                 setListeners((current) =>
                   editingId
                     ? current.map((row) =>
@@ -653,9 +863,10 @@ export default function Home() {
                 );
                 if (!editingId && listener.group) {
                   setDeviceGroup(listener.group);
-                  setDeviceListenerId(id);
+                  setDeviceListenerId(record.id);
                 }
-                return id;
+                setServerError('');
+                return record;
               }}
             />
           )}
@@ -1068,10 +1279,15 @@ function ListenerForm({
   rows: ListenerRecord[];
   telegramGroupUrl: string;
   lockedGroup: string;
-  onSave: (listener: ListenerDraft, editingId?: string) => string;
+  onSave: (
+    listener: ListenerDraft,
+    files: ListenerUploads,
+    editingId?: string,
+  ) => Promise<ListenerRecord>;
   onCancel: () => void;
 }) {
   const [submitted, setSubmitted] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [selectedGroup, setSelectedGroup] = useState('');
   const [selectedRegion, setSelectedRegion] = useState('');
@@ -1157,6 +1373,7 @@ function ListenerForm({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) return;
     const form = event.currentTarget;
     if (!form.checkValidity()) {
       form.reportValidity();
@@ -1171,20 +1388,16 @@ function ListenerForm({
     const startDate = String(data.get('startDate') ?? '');
     const birthDate = String(data.get('birthDate') ?? '');
     const cleanPhone = String(data.get('phone') ?? '').replace(/\D/g, '');
-    const readFile = async (name: string, existing: string) => {
+    const readFile = (name: string) => {
       const file = data.get(name);
-      return file instanceof File && file.size ? fileDataUrl(file) : existing;
+      return file instanceof File && file.size ? file : undefined;
     };
-    const photo = await readFile('photo', editingRecord?.photo || '');
-    const orderFile = await readFile('order', editingRecord?.orderFile || '');
-    const passportFront = await readFile(
-      'passportFront',
-      editingRecord?.passportFront || '',
-    );
-    const passportBack = await readFile(
-      'passportBack',
-      editingRecord?.passportBack || '',
-    );
+    const files: ListenerUploads = {
+      photo: readFile('photo'),
+      order: readFile('order'),
+      passportFront: readFile('passportFront'),
+      passportBack: readFile('passportBack'),
+    };
     const age = birthDate
       ? Math.max(
           0,
@@ -1215,23 +1428,35 @@ function ListenerForm({
       note: String(data.get('note') ?? '').trim(),
       age,
       role: 'Тингловчи',
-      photo,
-      orderFile,
-      passportFront,
-      passportBack,
+      photo: editingRecord?.photo || '',
+      orderFile: editingRecord?.orderFile || '',
+      passportFront: editingRecord?.passportFront || '',
+      passportBack: editingRecord?.passportBack || '',
     };
-    onSave(draft, editingRecord?.id);
-    setEditingRecord(null);
-    setPhotoPreview('');
+    setSaving(true);
     setError('');
-    setSubmitted(true);
-    setGroupPreviewOpen(true);
-    setCardsOnly(true);
-    window.requestAnimationFrame(() =>
-      document
-        .querySelector('.ting-form-body')
-        ?.scrollTo({ top: 0, behavior: 'smooth' }),
-    );
+    try {
+      await onSave(draft, files, editingRecord?.id);
+      setEditingRecord(null);
+      setPhotoPreview('');
+      setSubmitted(true);
+      setGroupPreviewOpen(true);
+      setCardsOnly(true);
+      window.requestAnimationFrame(() =>
+        document
+          .querySelector('.ting-form-body')
+          ?.scrollTo({ top: 0, behavior: 'smooth' }),
+      );
+    } catch (error) {
+      setSubmitted(false);
+      setError(
+        error instanceof Error
+          ? error.message
+          : 'Ma’lumot saqlanmadi. Qayta urinib ko‘ring.',
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -1764,12 +1989,17 @@ function ListenerForm({
           <footer>
             <button
               type="button"
+              disabled={saving}
               onClick={editingRecord ? cancelEditing : onCancel}
             >
               {editingRecord ? 'TAHRIRNI BEKOR QILISH' : 'Bekor qilish'}
             </button>
-            <button className="primary">
-              {editingRecord ? 'O‘ZGARISHLARNI SAQLASH' : 'RO‘YXATGA KIRITISH'}
+            <button className="primary" disabled={saving}>
+              {saving
+                ? 'SAQLANMOQDA…'
+                : editingRecord
+                  ? 'O‘ZGARISHLARNI SAQLASH'
+                  : 'RO‘YXATGA KIRITISH'}
             </button>
           </footer>
         )}
