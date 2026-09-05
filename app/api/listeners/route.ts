@@ -16,6 +16,7 @@ import {
   deviceBindingCookie,
 } from '@/lib/auth';
 import { hasSameOrigin, rateLimit, validCalendarDate } from '@/lib/security';
+import { isListenerAudience } from '@/lib/listener-audience';
 
 export const dynamic = 'force-dynamic';
 
@@ -121,7 +122,9 @@ export async function POST(request: Request) {
     if (!hasSameOrigin(request)) {
       return publicError('Saqlash so‘rovi manbasi tasdiqlanmadi.', 403);
     }
-    const member = await authenticatedAdmin(request);
+    const member = isListenerAudience(request)
+      ? null
+      : await authenticatedAdmin(request);
     let binding = member ? null : await deviceBinding(request);
     if (!member && !(await rateLimit(request, 'listener-write'))) {
       return publicError(

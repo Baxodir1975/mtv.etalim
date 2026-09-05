@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { formatAdminCohort } from '../lib/listener-preview.ts';
+import { isListenerAudience } from '../lib/listener-audience.ts';
 
 const group56 = 'Nomzod direktor (56-guruh)';
 const group57 = 'Nomzod direktor (57-guruh)';
@@ -63,6 +64,8 @@ function setup({
   device = null,
   throttled = false,
   databaseFails = false,
+  audience = '',
+  records = fixtures,
 } = {}) {
   const calls = [];
   const sql = async (strings, ...values) => {
@@ -73,7 +76,7 @@ function setup({
     if (databaseFails) throw new Error('Database unavailable');
     if (query.includes('LIMIT 1')) {
       const byId = query.includes('WHERE id =');
-      return fixtures
+      return records
         .filter(
           (row) =>
             !row.deleted_at &&
@@ -82,9 +85,9 @@ function setup({
         .slice(0, 1);
     }
     const [allGroups, group, allYears, year, allMonths, month, limit] = values;
-    assert.equal(limit, admin ? 1000 : 250);
+    assert.equal(limit, admin && audience !== 'listener' ? 1000 : 250);
     assert.match(query, /deleted_at IS NULL/);
-    return fixtures
+    return records
       .filter(
         (row) =>
           !row.deleted_at &&
@@ -95,6 +98,7 @@ function setup({
       .slice(0, limit);
   };
   const mocks = {
+    '@/lib/listener-audience': { isListenerAudience },
     '@/lib/auth': {
       authenticatedAdmin: async () =>
         admin ? { active: true, permissions: ['Tinglovchilar:Ko‘rish'] } : null,
@@ -137,7 +141,11 @@ function setup({
       const response = await exports.POST(
         new Request('https://mtv.etalimai.uz/api/listeners/lookup', {
           method: 'POST',
-          headers: { origin, 'content-type': 'application/json' },
+          headers: {
+            origin,
+            'content-type': 'application/json',
+            'x-mtv-audience': audience,
+          },
           body: JSON.stringify(body),
         }),
       );
@@ -291,4 +299,40 @@ test('admin heading describes only the chosen scope, never a guessed majority mo
     formatAdminCohort({ group: '', year: '2026', month: '09' }),
     'Barcha guruhlar · 2026 yil, sentyabr',
   );
+});
+
+test('public form in an admin browser still stays in the device cohort', async () => {
+  const result = await setup({
+    admin: true,
+    audience: 'listener',
+    device: { listenerId: 'owner' },
+  }).lookup({ group: group57, year: '2025', month: '08' });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.canViewAll, false);
+  assert.deepEqual(result.body.listeners, [
+    { id: 'owner', privateDetails: true },
+    { id: 'peer', privateDetails: false },
+  ]);
+});
+
+test('public audience without a device or phone never inherits admin access', async () => {
+  assert.equal(
+    (await setup({ admin: true, audience: 'listener' }).lookup()).status,
+    400,
+  );
+  assert.equal((await setup({ audience: 'admin' }).lookup()).status, 400);
+});
+
+test('pressing Ko‘rish again reloads new peers but never another group', async () => {
+  const records = fixtures.map((row) => ({ ...row }));
+  const app = setup({ device: { listenerId: 'owner' }, records });
+  assert.equal((await app.lookup()).body.listeners.length, 2);
+  records.push({ ...records[1], id: 'new-peer' });
+  records.push({ ...records[3], id: 'new-other-group' });
+  const refreshed = await app.lookup({ group: group57, year: '2025' });
+  assert.deepEqual(
+    refreshed.body.listeners.map((row) => row.id),
+    ['owner', 'peer', 'new-peer'],
+  );
+  assert.equal(refreshed.body.cohort.group, group56);
 });

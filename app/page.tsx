@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { formatAdminCohort } from '@/lib/listener-preview';
+import { listenerAudienceHeaders } from '@/lib/listener-audience';
 import {
   useEffect,
   useMemo,
@@ -601,6 +602,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!window.location.pathname.startsWith('/admin')) {
+      setAdminViewer(null);
+      setAdminSessionChecked(true);
+      return;
+    }
     const controller = new AbortController();
     void (async () => {
       try {
@@ -652,6 +658,7 @@ export default function Home() {
       try {
         const [response, deviceResponse] = await Promise.all([
           fetch('/api/state', {
+            headers: listenerAudienceHeaders(adminEntry),
             cache: 'no-store',
             signal: controller.signal,
           }),
@@ -832,7 +839,7 @@ export default function Home() {
   }
 
   const can = (permission: string) =>
-    Boolean(adminViewer?.permissions.includes(permission));
+    Boolean(adminEntry && adminViewer?.permissions.includes(permission));
   const canSelectAnyGroup = can('Tinglovchilar:Kiritish');
   const canViewAnyGroup = can('Tinglovchilar:Ko‘rish');
   const profileName = adminViewer?.name ?? 'Tinglovchi';
@@ -1084,6 +1091,8 @@ export default function Home() {
           )}
           {activeSection === 'form' && (
             <ListenerForm
+              isAdminForm={adminEntry}
+              canEdit={can('Tinglovchilar:Tahrirlash')}
               rows={listeners}
               telegramGroupUrl={telegramGroupUrl}
               lockedGroup={deviceBindingVerified ? deviceGroup : ''}
@@ -1121,6 +1130,7 @@ export default function Home() {
                 }
                 const response = await fetch('/api/listeners', {
                   method: 'POST',
+                  headers: listenerAudienceHeaders(adminEntry),
                   body: payload,
                 });
                 const result = (await response.json()) as {
@@ -1872,6 +1882,8 @@ function groupPreviewTitle(
 }
 
 function ListenerForm({
+  isAdminForm,
+  canEdit,
   rows,
   telegramGroupUrl,
   lockedGroup,
@@ -1886,6 +1898,8 @@ function ListenerForm({
   onSave,
   onCancel,
 }: {
+  isAdminForm: boolean;
+  canEdit: boolean;
   rows: ListenerRecord[];
   telegramGroupUrl: string;
   lockedGroup: string;
@@ -2000,8 +2014,34 @@ function ListenerForm({
       selectedYear,
     ],
   );
-  const groupIsLocked =
-    !canSelectAnyGroup && Boolean(editingRecord || lockedGroup);
+  const groupIsLocked = !isAdminForm && Boolean(editingRecord || lockedGroup);
+  const boundListener =
+    !isAdminForm && deviceBindingVerified && !!ownerListenerId;
+  const restoredOwnerId = useRef('');
+
+  // Restore the saved card on a return visit, never a second registration.
+  useEffect(() => {
+    if (!boundListener || restoredOwnerId.current === ownerListenerId) return;
+    const owner = rows.find((row) => row.id === ownerListenerId);
+    if (!owner) return;
+    restoredOwnerId.current = ownerListenerId;
+    if (editingRecord) return;
+    const month = owner.startDate?.slice(5, 7) || '';
+    setPreviewCohort({ group: owner.group, year: owner.year, month });
+    setPreviewRows(
+      rows.filter(
+        (row) =>
+          row.group === owner.group &&
+          row.year === owner.year &&
+          row.startDate?.slice(5, 7) === month,
+      ),
+    );
+    setSelectedGroup(owner.group);
+    setSelectedStartDate(owner.startDate || '');
+    setSelectedYear(owner.year);
+    setCardsOnly(true);
+    setGroupPreviewOpen(true);
+  }, [boundListener, ownerListenerId, rows, editingRecord]);
 
   useEffect(() => {
     if (!canSelectAnyGroup && !editingRecord && lockedGroup) {
@@ -2049,18 +2089,26 @@ function ListenerForm({
     try {
       const response = await fetch('/api/listeners/lookup', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          phone: canViewAnyGroup ? '' : phoneDigits,
-          group: previewGroup,
-          year: previewYear,
-          month: record
-            ? record.startDate?.slice(5, 7)
-            : canViewAnyGroup
-              ? adminPreviewFilters.month
-              : undefined,
-          startDate: canViewAnyGroup && !record ? '' : previewStartDate,
-        }),
+        cache: 'no-store',
+        headers: {
+          'content-type': 'application/json',
+          ...listenerAudienceHeaders(isAdminForm),
+        },
+        body: JSON.stringify(
+          isAdminForm
+            ? {
+                phone: canViewAnyGroup ? '' : phoneDigits,
+                group: previewGroup,
+                year: previewYear,
+                month: record
+                  ? record.startDate?.slice(5, 7)
+                  : canViewAnyGroup
+                    ? adminPreviewFilters.month
+                    : undefined,
+                startDate: canViewAnyGroup && !record ? '' : previewStartDate,
+              }
+            : { phone: record?.phone || phoneDigits },
+        ),
       });
       const result = (await response.json()) as {
         found?: boolean;
@@ -2096,8 +2144,7 @@ function ListenerForm({
       setLookupError('');
       return true;
     } catch (lookupError) {
-      setPreviewRows([]);
-      setPreviewCohort(null);
+      // Keep the last confirmed roster visible during a failed refresh.
       setLookupError(
         lookupError instanceof Error
           ? lookupError.message
@@ -2139,6 +2186,16 @@ function ListenerForm({
   }
 
   function cancelEditing() {
+    if (boundListener) {
+      setEditingRecord(null);
+      setCardsOnly(true);
+      setGroupPreviewOpen(true);
+      setSubmitted(false);
+      setError('');
+      setLookupError('');
+      void loadGroupPreview();
+      return;
+    }
     setCardsOnly(false);
     setEditingRecord(null);
     setSelectedGroup('');
@@ -2224,8 +2281,18 @@ function ListenerForm({
       setPhotoPreview('');
       setSubmitted(true);
       const previewLoaded = await loadGroupPreview(savedRecord);
-      setGroupPreviewOpen(previewLoaded);
-      setCardsOnly(previewLoaded);
+      if (!previewLoaded) {
+        // The write succeeded even if the follow-up read failed.
+        setPreviewRows([savedRecord]);
+        setPreviewCohort({
+          group: savedRecord.group,
+          year: savedRecord.year,
+          month: savedRecord.startDate?.slice(5, 7) || '',
+        });
+        if (!isAdminForm) setPreviewOwnerListenerId(savedRecord.id);
+      }
+      setGroupPreviewOpen(true);
+      setCardsOnly(true);
       window.requestAnimationFrame(() =>
         document
           .querySelector('.ting-form-body')
@@ -2246,12 +2313,39 @@ function ListenerForm({
   return (
     <section className="listener-form-standalone">
       <div className="listener-form-intro">
-        <p>TINGLOVCHI · 2026</p>
-        <h2>Ro‘yxatdan o‘tkazish</h2>
+        <p>
+          {isAdminForm ? 'BOSHQARUV · TINGLOVCHI FORMASI' : 'TINGLOVCHI · 2026'}
+        </p>
+        <h2>
+          {isAdminForm
+            ? 'Admin uchun tinglovchi formasi'
+            : 'Ro‘yxatdan o‘tkazish'}
+        </h2>
         <small>
           Forma va kartochkalar E-talim manbasidan olinib, MTV uchun
           moslashtirildi.
         </small>
+        {isAdminForm && (
+          <p>
+            <Link
+              href="/admin?section=listeners"
+              onClick={(event) => {
+                event.preventDefault();
+                onCancel();
+              }}
+            >
+              Tinglovchilarni boshqarish
+            </Link>
+            {' · '}
+            <Link
+              href="/?section=form"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Oddiy tinglovchi formasini ochish ↗
+            </Link>
+          </p>
+        )}
       </div>
       <form
         key={editingRecord?.id || 'new'}
@@ -2345,6 +2439,8 @@ function ListenerForm({
                     ))}
                   </select>
                 </div>
+              ) : boundListener ? (
+                <strong className="form-lookup-help">🔒 {lockedGroup}</strong>
               ) : (
                 <label className="form-lookup-phone">
                   <span>+998</span>
@@ -2363,10 +2459,20 @@ function ListenerForm({
               )}
               <button
                 type="button"
-                disabled={lookingUpGroup}
+                disabled={lookingUpGroup || saving}
+                aria-label="Ko‘rish"
+                title={
+                  boundListener
+                    ? 'O‘z guruhim ro‘yxatini yangilash'
+                    : 'Guruhni ko‘rish'
+                }
                 onClick={() => void openGroupPreview()}
               >
-                {lookingUpGroup ? '… Tekshirilmoqda' : '👁 Ko‘rish'}
+                {lookingUpGroup
+                  ? '… Yangilanmoqda'
+                  : groupPreviewOpen
+                    ? '↻ Ko‘rish'
+                    : '👁 Ko‘rish'}
               </button>
             </div>
             {canViewAnyGroup ? (
@@ -2376,7 +2482,9 @@ function ListenerForm({
               </small>
             ) : (
               <small className="form-lookup-help">
-                Ro‘yxatdan o‘tgan 9 xonali telefon raqamingizni kiriting.
+                {boundListener
+                  ? 'Guruhingiz birinchi ro‘yxatdan o‘tishda biriktirilgan. «Ko‘rish»ni qayta bossangiz, shu guruhdagi yangi tinglovchilar ham ko‘rinadi.'
+                  : 'Birinchi marta formani to‘ldiring. Avval ro‘yxatdan o‘tgan bo‘lsangiz, 9 xonali telefon raqamingizni kiriting.'}
               </small>
             )}
             {lookupError && (
@@ -2419,7 +2527,7 @@ function ListenerForm({
                     👥 {detectedGroupTitle} · {detectedGroupRows.length} nafar
                   </h4>
                 </div>
-                {cardsOnly ? (
+                {boundListener && cardsOnly ? null : cardsOnly ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -2543,13 +2651,12 @@ function ListenerForm({
                             </span>
                           </a>
                         )}
-                        {!progress.complete && (
+                        {(canEdit || !progress.complete) && (
                           <footer className="listener-member-edit">
                             <span>
                               To‘ldirilgan {progress.completed}/{progress.total}
                             </span>
-                            {(canSelectAnyGroup ||
-                              previewOwnerListenerId === row.id) && (
+                            {(canEdit || previewOwnerListenerId === row.id) && (
                               <button
                                 type="button"
                                 onClick={() => editRecord(row)}
@@ -2588,6 +2695,7 @@ function ListenerForm({
                     name="startDate"
                     type="date"
                     required
+                    readOnly={groupIsLocked}
                     defaultValue={selectedStartDate}
                     onInput={(event) => {
                       const value = event.currentTarget.value;

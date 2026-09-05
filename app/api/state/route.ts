@@ -18,6 +18,8 @@ import {
   type RoleDbRow,
 } from '@/lib/server-data';
 
+import { isListenerAudience } from '@/lib/listener-audience';
+
 export const dynamic = 'force-dynamic';
 
 const listenerColumns = `
@@ -48,7 +50,7 @@ function telegramUrl(value: unknown) {
 export async function GET(request: Request) {
   try {
     const [member, device, groupView] = await Promise.all([
-      authenticatedAdmin(request),
+      isListenerAudience(request) ? null : authenticatedAdmin(request),
       deviceBinding(request),
       groupViewBinding(request),
     ]);

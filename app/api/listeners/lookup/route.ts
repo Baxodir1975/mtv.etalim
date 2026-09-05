@@ -1,4 +1,5 @@
 import { authenticatedAdmin, deviceBinding, groupViewCookie } from '@/lib/auth';
+import { isListenerAudience } from '@/lib/listener-audience';
 import {
   getDatabase,
   hasPermission,
@@ -52,7 +53,7 @@ export async function POST(request: Request) {
 
   try {
     const [member, device] = await Promise.all([
-      authenticatedAdmin(request),
+      isListenerAudience(request) ? null : authenticatedAdmin(request),
       deviceBinding(request),
     ]);
     const canViewAll = hasPermission(member, 'Tinglovchilar:Ko‘rish');
