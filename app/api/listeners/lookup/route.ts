@@ -1,4 +1,4 @@
-import { authenticatedAdmin, deviceBinding, groupViewCookie } from '@/lib/auth';
+import { authenticatedAdmin, deviceBinding } from '@/lib/auth';
 import { isListenerAudience } from '@/lib/listener-audience';
 import {
   getDatabase,
@@ -21,12 +21,6 @@ type LookupInput = {
   month?: unknown;
   startDate?: unknown;
 };
-
-function phoneDigits(value: unknown) {
-  const digits = typeof value === 'string' ? value.replace(/\D/g, '') : '';
-  if (digits.length === 12 && digits.startsWith('998')) return digits.slice(3);
-  return digits;
-}
 
 export async function POST(request: Request) {
   if (!hasSameOrigin(request)) {
@@ -58,43 +52,34 @@ export async function POST(request: Request) {
     ]);
     const canViewAll = hasPermission(member, 'Tinglovchilar:Ko‘rish');
     const sql = getDatabase();
-    const phone = phoneDigits(input.phone);
-    if (!canViewAll && !device && !/^\d{9}$/.test(phone)) {
+    if (!canViewAll && !device) {
       return publicError(
-        'Guruhni ko‘rish uchun ro‘yxatdan o‘tgan telefon raqamini 9 ta raqamda kiriting.',
-        400,
+        'Avval shu qurilmada ro‘yxatdan o‘ting. Guruh telefon raqamiga emas, saqlangan qabul yozuviga biriktiriladi.',
+        403,
       );
     }
     let group = safeText(input.group, 100);
     let year = safeText(input.year, 4);
     let month = safeText(input.month, 2);
     let ownerListenerId = canViewAll ? '' : device?.listenerId || '';
-    let openedByPhone = false;
+    let category = '';
     const startDate = safeText(input.startDate, 10);
     if (!month && /^\d{4}-(\d{2})-\d{2}$/.test(startDate)) {
       month = startDate.slice(5, 7);
     }
 
     if (!canViewAll) {
-      const sourceRows = device
-        ? await sql`
-            SELECT id, group_name, training_year,
+      const sourceRows = await sql`
+            SELECT id, group_name, training_year, category,
                    COALESCE(TO_CHAR(start_date, 'MM'), '') AS training_month
             FROM listeners
-            WHERE id = ${device.listenerId} AND deleted_at IS NULL
-            LIMIT 1
-          `
-        : await sql`
-            SELECT id, group_name, training_year,
-                   COALESCE(TO_CHAR(start_date, 'MM'), '') AS training_month
-            FROM listeners
-            WHERE phone_digits = ${phone} AND deleted_at IS NULL
+            WHERE id = ${device!.listenerId} AND deleted_at IS NULL
             LIMIT 1
           `;
       const source = sourceRows[0];
       if (!source) return jsonResponse({ found: false, listeners: [] });
       if (device) ownerListenerId = String(source.id || '');
-      openedByPhone = !device;
+      category = String(source.category || '');
       group = String(source.group_name || '');
       year = String(source.training_year || '');
       month = String(source.training_month || '');
@@ -126,6 +111,7 @@ export async function POST(request: Request) {
         AND (${canViewAll && !group} OR group_name = ${group})
         AND (${canViewAll && !year} OR training_year = ${year})
         AND (${canViewAll && !month} OR COALESCE(TO_CHAR(start_date, 'MM'), '') = ${month})
+        AND (${canViewAll} OR category = ${category})
       ORDER BY created_at ASC
       LIMIT ${canViewAll ? 1000 : 250}
     `;
@@ -138,17 +124,11 @@ export async function POST(request: Request) {
     const response = jsonResponse({
       found: true,
       group,
-      cohort: { group, year, month },
+      cohort: { group, year, month, category },
       canViewAll,
       listeners,
       ownerListenerId,
     });
-    if (openedByPhone) {
-      response.headers.append(
-        'Set-Cookie',
-        await groupViewCookie(group, year, month),
-      );
-    }
     return response;
   } catch (error) {
     logServerError(

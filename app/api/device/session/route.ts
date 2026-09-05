@@ -18,7 +18,8 @@ export async function GET(request: Request) {
   try {
     const sql = getDatabase();
     const rows = await sql`
-      SELECT id, group_name
+      SELECT id, group_name, training_year, category,
+             COALESCE(TO_CHAR(start_date, 'MM'), '') AS training_month
       FROM listeners
       WHERE id = ${binding.listenerId} AND deleted_at IS NULL
       LIMIT 1
@@ -33,6 +34,12 @@ export async function GET(request: Request) {
       bound: true,
       listenerId: binding.listenerId,
       group: currentGroup,
+      cohort: {
+        group: currentGroup,
+        year: String(rows[0].training_year || ''),
+        month: String(rows[0].training_month || ''),
+        category: String(rows[0].category || ''),
+      },
     });
     if (currentGroup !== binding.group) {
       response.headers.append(

@@ -157,7 +157,7 @@ export async function POST(request: Request) {
       typeof editingValue === 'string' ? editingValue.trim() : '';
     const phone = phoneDigits(input.phone);
     let group = text(input, 'group', 100);
-    const category = text(input, 'category', 100);
+    let category = text(input, 'category', 100);
     const region = text(input, 'region', 120);
     const district = text(input, 'district', 120);
     const workplace = text(input, 'workplace', 300);
@@ -267,6 +267,9 @@ export async function POST(request: Request) {
             created_at, updated_at
           FROM listeners
           WHERE phone_digits = ${phone} AND deleted_at IS NULL
+            AND group_name = ${group} AND training_year = ${trainingYear}
+            AND category = ${category}
+            AND EXTRACT(MONTH FROM start_date) = ${Number(startDate.slice(5, 7))}
           LIMIT 1
         `;
     const current = currentRows[0] as ListenerDbRow | undefined;
@@ -279,6 +282,7 @@ export async function POST(request: Request) {
       // the server values so a stale or manipulated browser cannot pivot to a
       // different month/year and enumerate another cohort.
       group = current.group_name;
+      category = current.category;
       trainingYear = current.training_year;
       startDate =
         current.start_date instanceof Date
@@ -287,7 +291,7 @@ export async function POST(request: Request) {
     }
     if (!editingId && current) {
       return publicError(
-        'Bu telefon raqami avval ro‘yxatdan o‘tgan. “Ko‘rish” orqali kartochkani oching.',
+        'Shu telefon bilan aynan shu yil, oy, kategoriya va guruhda yozuv mavjud. “Ko‘rish” orqali kartochkani oching.',
         409,
       );
     }
@@ -297,11 +301,14 @@ export async function POST(request: Request) {
         SELECT id FROM listeners
         WHERE phone_digits = ${phone} AND id <> ${editingId}
           AND deleted_at IS NULL
+          AND group_name = ${group} AND training_year = ${trainingYear}
+          AND category = ${category}
+          AND EXTRACT(MONTH FROM start_date) = ${Number(startDate.slice(5, 7))}
         LIMIT 1
       `;
       if (duplicate.length) {
         return publicError(
-          'Bu telefon raqami boshqa tinglovchiga biriktirilgan.',
+          'Aynan shu o‘quv guruhida ushbu telefon bilan boshqa yozuv mavjud.',
           409,
         );
       }
@@ -496,7 +503,10 @@ export async function POST(request: Request) {
       return publicError('Tahrirlanayotgan tinglovchi topilmadi.', 404);
     }
     if (errorCode === '23505') {
-      return publicError('Бу телефон рақами аввал рўйхатдан ўтган.', 409);
+      return publicError(
+        'Aynan shu yil, oy, kategoriya va guruhda takroriy yozuv mavjud.',
+        409,
+      );
     }
     return publicError(
       'Ma’lumot saqlanmadi. Internet aloqasini tekshirib, qayta urinib ko‘ring.',

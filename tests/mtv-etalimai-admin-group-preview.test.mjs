@@ -45,7 +45,7 @@ const fixtures = [
     deleted_at: '2026-09-01',
     phone_digits: '905555555',
   },
-];
+].map((row) => ({ ...row, category: 'Nomzod direktor' }));
 const routeCode = ts.transpileModule(
   readFileSync(
     new URL('../app/api/listeners/lookup/route.ts', import.meta.url),
@@ -84,7 +84,17 @@ function setup({
         )
         .slice(0, 1);
     }
-    const [allGroups, group, allYears, year, allMonths, month, limit] = values;
+    const [
+      allGroups,
+      group,
+      allYears,
+      year,
+      allMonths,
+      month,
+      allCategories,
+      category,
+      limit,
+    ] = values;
     assert.equal(limit, admin && audience !== 'listener' ? 1000 : 250);
     assert.match(query, /deleted_at IS NULL/);
     return records
@@ -93,7 +103,8 @@ function setup({
           !row.deleted_at &&
           (allGroups || row.group_name === group) &&
           (allYears || row.training_year === year) &&
-          (allMonths || row.training_month === month),
+          (allMonths || row.training_month === month) &&
+          (allCategories || row.category === category),
       )
       .slice(0, limit);
   };
@@ -163,7 +174,12 @@ test('admin opens all groups without group, year, month or phone', async () => {
   assert.equal(status, 200);
   assert.equal(body.found, true);
   assert.equal(body.canViewAll, true);
-  assert.deepEqual(body.cohort, { group: '', year: '', month: '' });
+  assert.deepEqual(body.cohort, {
+    group: '',
+    year: '',
+    month: '',
+    category: '',
+  });
   assert.deepEqual(
     body.listeners.map((row) => row.id),
     ['owner', 'peer', 'other-year', 'other-group'],
@@ -223,29 +239,16 @@ test('anonymous cannot request all groups or forge admin flags', async () => {
     { group: group56 },
     { canViewAll: true, role: 'Bosh admin' },
   ]) {
-    assert.equal((await app.lookup(body)).status, 400);
+    assert.equal((await app.lookup(body)).status, 403);
   }
   assert.equal(app.calls.length, 0);
 });
-test('phone lookup stays in stored cohort and returns only public peers', async () => {
-  const result = await setup().lookup({
-    phone: '+998901111111',
-    group: group57,
-    year: '2025',
-    month: '08',
-  });
-  assert.equal(result.status, 200);
-  assert.deepEqual(
-    result.body.listeners.map((row) => row.id),
-    ['owner', 'peer'],
-  );
-  assert.ok(result.body.listeners.every((row) => !row.privateDetails));
-  assert.deepEqual(result.body.cohort, {
-    group: group56,
-    year: '2026',
-    month: '09',
-  });
-  assert.ok(result.cookie);
+test('phone knowledge does not grant access to any cohort', async () => {
+  const app = setup();
+  const result = await app.lookup({ phone: '+998901111111', group: group56 });
+  assert.equal(result.status, 403);
+  assert.equal(result.body.listeners, undefined);
+  assert.equal(app.calls.length, 0);
 });
 test('device lookup cannot escape stored cohort; only owner sees full details', async () => {
   const result = await setup({ device: { listenerId: 'owner' } }).lookup({
@@ -263,8 +266,8 @@ test('device lookup cannot escape stored cohort; only owner sees full details', 
 test('unknown or deleted phone does not expose any group', async () => {
   for (const phone of ['909999999', '905555555']) {
     const result = await setup().lookup({ phone });
-    assert.equal(result.body.found, false);
-    assert.deepEqual(result.body.listeners, []);
+    assert.equal(result.status, 403);
+    assert.equal(result.body.listeners, undefined);
   }
 });
 test('origin and rate-limit checks remain enforced for admin', async () => {
@@ -318,9 +321,9 @@ test('public form in an admin browser still stays in the device cohort', async (
 test('public audience without a device or phone never inherits admin access', async () => {
   assert.equal(
     (await setup({ admin: true, audience: 'listener' }).lookup()).status,
-    400,
+    403,
   );
-  assert.equal((await setup({ audience: 'admin' }).lookup()).status, 400);
+  assert.equal((await setup({ audience: 'admin' }).lookup()).status, 403);
 });
 
 test('pressing Ko‘rish again reloads new peers but never another group', async () => {
@@ -335,4 +338,23 @@ test('pressing Ko‘rish again reloads new peers but never another group', async
     ['owner', 'peer', 'new-peer'],
   );
   assert.equal(refreshed.body.cohort.group, group56);
+});
+
+test('category and registration identity prevent cross-cohort access even with the same phone', async () => {
+  const records = fixtures.map((row) => ({ ...row }));
+  records.push({
+    ...records[0],
+    id: 'different-category',
+    category: 'Different course',
+  });
+  records[3].phone_digits = records[0].phone_digits;
+  const result = await setup({
+    device: { listenerId: 'owner' },
+    records,
+  }).lookup({ phone: records[3].phone_digits, group: group57 });
+  assert.deepEqual(
+    result.body.listeners.map((row) => row.id),
+    ['owner', 'peer'],
+  );
+  assert.equal(result.body.cohort.category, 'Nomzod direktor');
 });

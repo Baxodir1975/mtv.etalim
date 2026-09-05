@@ -127,6 +127,7 @@ function setup(overrides = {}) {
     'next/link': { default: 'a' },
     '@/lib/listener-preview': { formatAdminCohort },
     '@/lib/listener-audience': { listenerAudienceHeaders },
+    '@/components/form-share-bar': { FormShareBar: () => null },
     '@/components/google-admin-login': { GoogleAdminLogin: () => null },
   };
   const exports = {};
@@ -213,6 +214,13 @@ const cardsHidden = (app) =>
 
 test('ordinary form has no browse filters; admin form has all three', () => {
   assert.equal(filters(setup()).length, 0);
+  assert.equal(
+    setup().find(
+      (node) =>
+        node.props?.['aria-label'] === 'Ro‘yxatdan o‘tgan telefon raqami',
+    ).length,
+    0,
+  );
   const admin = setup({
     isAdminForm: true,
     canViewAnyGroup: true,
@@ -232,6 +240,13 @@ test('returning bound listener sees own cards, not another registration', async 
     deviceBindingVerified: true,
   });
   assert.equal(cardsHidden(app), true);
+  const lock = app.find(
+    (node) => node.props?.['aria-label'] === 'Biriktirilgan o‘quv guruhi',
+  )[0];
+  assert.match(textOf(lock), /2026 yil/);
+  assert.match(textOf(lock), /sentyabr/);
+  assert.match(textOf(lock), /Nomzod direktor/);
+  assert.match(textOf(lock), /56-guruh/);
   assert.equal(filters(app).length, 0);
   assert.equal(
     app.find(
@@ -253,9 +268,7 @@ test('returning bound listener sees own cards, not another registration', async 
     ),
   );
   assert.ok(
-    app.requests.every(
-      (request) => Object.keys(request.payload).join(',') === 'phone',
-    ),
+    app.requests.every((request) => Object.keys(request.payload).length === 0),
   );
   assert.ok(textOf(app.tree).includes('3 nafar'));
 });

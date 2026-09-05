@@ -1,0 +1,215 @@
+.mtv-form-share {
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--blue);
+  border-radius: 12px;
+  margin-bottom: 18px;
+  overflow: hidden;
+  font-family: 'Segoe UI', Arial, sans-serif;
+}
+.mtv-form-share-label {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.mtv-form-share-label strong {
+  font-size: 1rem;
+  color: var(--deep);
+}
+.mtv-form-share-label span {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.mtv-share-links {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(210px, 0.65fr);
+}
+.mtv-share-item {
+  display: flex;
+  gap: 12px;
+  padding: 18px;
+  min-width: 0;
+  border-right: 1px solid var(--line);
+}
+.mtv-share-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 34px;
+  height: 34px;
+  background: var(--sky);
+  color: var(--blue);
+  border-radius: 9px;
+  font-size: 1.3rem;
+}
+.mtv-share-item.admin .mtv-share-icon {
+  color: var(--deep);
+  background: var(--mist);
+}
+.mtv-share-item a {
+  font-size: 1rem;
+  font-weight: 650;
+  text-decoration: none;
+  color: var(--deep);
+}
+.mtv-share-item small {
+  display: block;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--muted);
+  margin: 5px 0 10px;
+}
+.mtv-share-item button,
+.mtv-share-qr-expanded button {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+  background: var(--paper);
+  color: var(--blue);
+  font-size: 0.875rem;
+}
+.mtv-share-qr {
+  padding: 10px 14px;
+}
+.mtv-share-qr > button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 0;
+  color: var(--ink);
+}
+.mtv-share-qr img {
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.mtv-share-qr small {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+.mtv-share-qr b {
+  font-size: 1rem;
+}
+.mtv-share-feedback,
+.mtv-share-manual {
+  display: block;
+  padding: 12px 18px;
+  color: var(--deep);
+  background: var(--sky);
+  font-size: 0.875rem;
+}
+.mtv-share-manual textarea {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.mtv-share-qr-expanded {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: 20px;
+  border-top: 1px solid var(--line);
+}
+.mtv-share-qr-expanded img {
+  width: min(280px, 45%);
+  height: auto;
+}
+.mtv-share-qr-expanded > div {
+  max-width: 300px;
+  line-height: 1.6;
+}
+.mtv-share-qr-expanded a {
+  display: block;
+  color: var(--blue);
+  margin: 12px 0;
+}
+.mtv-form-share :is(a, button, textarea):focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 3px;
+}
+.mtv-cohort-lock {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.ting-page .listener-toolbar-only .listener-admin-links,
+.ting-page
+  .listener-toolbar-only
+  .listener-admin-links:has(.listener-admin-create) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ting-page .listener-toolbar-only .listener-quick-link.telegram {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.ting-page
+  .listener-toolbar-only
+  :is(
+    .listener-year-control,
+    .listener-month-control,
+    .listener-category-control
+  ) {
+  flex: 0 1 130px;
+  min-width: 100px;
+}
+.mtv-cohort-lock span {
+  border: 1px solid var(--line);
+  background: var(--sky);
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 0.875rem;
+  color: var(--deep);
+}
+@media (max-width: 1050px) {
+  .mtv-share-links {
+    grid-template-columns: 1fr 1fr;
+  }
+  .mtv-share-qr {
+    grid-column: 1/-1;
+    border-top: 1px solid var(--line);
+  }
+  .mtv-share-qr > button {
+    justify-content: center;
+  }
+  .mtv-share-item:nth-child(2) {
+    border-right: 0;
+  }
+}
+@media (max-width: 650px) {
+  .mtv-share-links {
+    grid-template-columns: 1fr;
+  }
+  .mtv-share-item {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .mtv-form-share-label {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .mtv-share-qr-expanded {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .mtv-share-qr-expanded img {
+    width: min(280px, 100%);
+  }
+}

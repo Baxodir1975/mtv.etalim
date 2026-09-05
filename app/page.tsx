@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { formatAdminCohort } from '@/lib/listener-preview';
 import { listenerAudienceHeaders } from '@/lib/listener-audience';
+import { FormShareBar } from '@/components/form-share-bar';
 import {
   useEffect,
   useMemo,
@@ -1244,7 +1245,6 @@ function ListenersPanel({
   const [actionError, setActionError] = useState('');
   const canManageListeners = canEdit || canDelete;
 
-  const registrationUrl = 'https://mtv.etalimai.uz/?section=form';
   const validTelegramUrl = /^https:\/\/(?:t\.me|telegram\.me)\/.+/i.test(
     telegramUrl.trim(),
   );
@@ -1406,6 +1406,7 @@ function ListenersPanel({
 
   return (
     <section className="ting-page">
+      <FormShareBar />
       {copied && <output className="notice">✓ {copied} nusxalandi</output>}
       {actionError && (
         <div className="notice error" role="alert">
@@ -1414,35 +1415,6 @@ function ListenersPanel({
       )}
       <header className="ting-hero ting-hero-unified has-admin-links listener-toolbar-only">
         <div className="listener-admin-links">
-          <article className="listener-quick-link registration">
-            <Link
-              className="listener-registration-open"
-              href="?section=form"
-              onClick={(event) => {
-                event.preventDefault();
-                onOpenForm();
-              }}
-            >
-              <span className="listener-client-icon">↗</span>
-              <span className="listener-link-copy">
-                <b>Ro‘yxatdan o‘tish</b>
-                <code>mtv.etalimai.uz/?section=form</code>
-              </span>
-              <i>→</i>
-            </Link>
-            <button
-              className="listener-registration-copy"
-              type="button"
-              aria-label="Forma havolasini nusxalash"
-              onClick={() => void copyValue(registrationUrl, 'Forma havolasi')}
-              title="Nusxalash"
-            >
-              <svg viewBox="0 0 24 24">
-                <rect x="8" y="3" width="11" height="14" rx="2" />
-                <path d="M16 17v2a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h1" />
-              </svg>
-            </button>
-          </article>
           {!telegramEditing ? (
             <article className="listener-quick-link telegram">
               <div className="listener-telegram-icon">➤</div>
@@ -1980,15 +1952,10 @@ function ListenerForm({
 
   const matchedListener = useMemo(
     () =>
-      (deviceBindingVerified
+      deviceBindingVerified
         ? rows.find((row) => row.id === ownerListenerId)
-        : undefined) ??
-      rows.find(
-        (row) =>
-          row.phone.replace(/\D/g, '').slice(-9) === phoneDigits &&
-          phoneDigits.length === 9,
-      ),
-    [deviceBindingVerified, ownerListenerId, rows, phoneDigits],
+        : undefined,
+    [deviceBindingVerified, ownerListenerId, rows],
   );
   const detectedGroup =
     previewCohort?.group || matchedListener?.group || selectedGroup;
@@ -2033,6 +2000,7 @@ function ListenerForm({
         (row) =>
           row.group === owner.group &&
           row.year === owner.year &&
+          row.category === owner.category &&
           row.startDate?.slice(5, 7) === month,
       ),
     );
@@ -2107,7 +2075,7 @@ function ListenerForm({
                     : undefined,
                 startDate: canViewAnyGroup && !record ? '' : previewStartDate,
               }
-            : { phone: record?.phone || phoneDigits },
+            : {},
         ),
       });
       const result = (await response.json()) as {
@@ -2120,9 +2088,7 @@ function ListenerForm({
       };
       if (!response.ok) throw new Error(result.error || 'Guruh aniqlanmadi.');
       if (!result.found || !result.cohort) {
-        throw new Error(
-          'Bu telefon raqami bo‘yicha ro‘yxatdan o‘tgan tinglovchi topilmadi.',
-        );
+        throw new Error('Shu qurilma uchun saqlangan qabul yozuvi topilmadi.');
       }
       const listeners = Array.isArray(result.listeners) ? result.listeners : [];
       const previewOwnerId = result.ownerListenerId || record?.id || '';
@@ -2440,22 +2406,25 @@ function ListenerForm({
                   </select>
                 </div>
               ) : boundListener ? (
-                <strong className="form-lookup-help">🔒 {lockedGroup}</strong>
+                <div
+                  className="mtv-cohort-lock"
+                  aria-label="Biriktirilgan o‘quv guruhi"
+                >
+                  <span>🔒 {previewCohort?.year || selectedYear} yil</span>
+                  <span>
+                    {uzbekMonthNames[
+                      Number(
+                        previewCohort?.month || selectedStartDate.slice(5, 7),
+                      ) - 1
+                    ] || 'Oy belgilanmagan'}
+                  </span>
+                  <span>{matchedListener?.category || 'Nomzod direktor'}</span>
+                  <span>{lockedGroup}</span>
+                </div>
               ) : (
-                <label className="form-lookup-phone">
-                  <span>+998</span>
-                  <input
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="tel-national"
-                    maxLength={9}
-                    pattern="[0-9]{9}"
-                    value={phoneDigits}
-                    placeholder="XX XXX XX XX"
-                    aria-label="Ro‘yxatdan o‘tgan telefon raqami"
-                    onInput={(event) => updatePhoneValue(event.currentTarget)}
-                  />
-                </label>
+                <small className="form-lookup-help">
+                  Yil · Oy · Kategoriya · Guruh
+                </small>
               )}
               <button
                 type="button"
@@ -2483,8 +2452,8 @@ function ListenerForm({
             ) : (
               <small className="form-lookup-help">
                 {boundListener
-                  ? 'Guruhingiz birinchi ro‘yxatdan o‘tishda biriktirilgan. «Ko‘rish»ni qayta bossangiz, shu guruhdagi yangi tinglovchilar ham ko‘rinadi.'
-                  : 'Birinchi marta formani to‘ldiring. Avval ro‘yxatdan o‘tgan bo‘lsangiz, 9 xonali telefon raqamingizni kiriting.'}
+                  ? 'Birinchi saqlangan o‘quv guruhingiz biriktirilgan. «Ko‘rish» shu guruh ro‘yxatini yangilaydi. Telefon raqami guruhni o‘zgartirmaydi.'
+                  : 'Formani to‘ldirib, «Ro‘yxatga kiritish»ni bosing. «Ko‘rish»da aynan shu yil, oy, kategoriya va guruh biriktiriladi.'}
               </small>
             )}
             {lookupError && (
@@ -2522,7 +2491,7 @@ function ListenerForm({
             <section className="form-group-preview">
               <header>
                 <div>
-                  <small>TELEFON / GURUH BO‘YICHA</small>
+                  <small>YIL · OY · KATEGORIYA · GURUH</small>
                   <h4>
                     👥 {detectedGroupTitle} · {detectedGroupRows.length} nafar
                   </h4>

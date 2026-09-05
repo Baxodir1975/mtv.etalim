@@ -21,6 +21,7 @@ const payload = {
 };
 const owner = {
   id: 'owner',
+  category: 'Nomzod direktor',
   phone_digits: '901111111',
   group_name: group56,
   training_year: '2026',
@@ -57,14 +58,24 @@ function setup({
     if (query.includes('FROM app_settings')) return [];
     if (query.includes('id <>')) {
       return rows.filter(
-        (row) => row.phone_digits === values[0] && row.id !== values[1],
+        (row) =>
+          row.phone_digits === values[0] &&
+          row.id !== values[1] &&
+          row.group_name === values[2] &&
+          row.training_year === values[3] &&
+          row.category === values[4] &&
+          Number(row.start_date.slice(5, 7)) === values[5],
       );
     }
     if (query.includes('FROM listeners')) {
       return rows.filter((row) =>
         query.includes('WHERE id =')
           ? row.id === values[0]
-          : row.phone_digits === values[0],
+          : row.phone_digits === values[0] &&
+            row.group_name === values[1] &&
+            row.training_year === values[2] &&
+            row.category === values[3] &&
+            Number(row.start_date.slice(5, 7)) === values[4],
       );
     }
     throw new Error('Unexpected query: ' + query);
@@ -268,4 +279,33 @@ test('verified admin form may change cohort without rebinding its device', async
 test('forged admin audience does not grant admin privileges', async () => {
   const app = setup({ binding: { listenerId: 'owner' }, records: [owner] });
   assert.equal((await app.save({ audience: 'admin' })).status, 409);
+});
+
+for (const change of [
+  { year: '2028', startDate: '2028-09-01' },
+  { year: '2029', startDate: '2029-09-01' },
+  { startDate: '2026-10-01' },
+  { group: group57, position: 'Yangi lavozim' },
+]) {
+  test(
+    'same phone may register in another cohort ' + JSON.stringify(change),
+    async () => {
+      const app = setup({ admin: true, records: [owner] });
+      const result = await app.save({
+        audience: 'admin',
+        input: { ...payload, ...change },
+      });
+      assert.equal(result.status, 201);
+      assert.equal(app.rows.length, 2);
+      assert.notEqual(result.body.listener.id, owner.id);
+      assert.equal(app.rows[0].group_name, group56);
+      assert.equal(app.rows[0].training_year, '2026');
+    },
+  );
+}
+
+test('same phone in the same cohort is still protected against duplicates', async () => {
+  const app = setup({ admin: true, records: [owner] });
+  assert.equal((await app.save({ audience: 'admin' })).status, 409);
+  assert.equal(app.writes.length, 0);
 });
