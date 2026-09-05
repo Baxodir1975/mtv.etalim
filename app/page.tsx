@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { formatAdminCohort } from '@/lib/listener-preview';
 import { listenerAudienceHeaders } from '@/lib/listener-audience';
 import { FormShareBar } from '@/components/form-share-bar';
+import { FormNavigation } from '@/components/form-navigation';
 import {
   useEffect,
   useMemo,
@@ -918,15 +919,10 @@ export default function Home() {
             <span className="nav-dot" aria-hidden="true" />
             TINGLOVCHILAR
           </button>
-          <button
-            className={
-              activeSection === 'form' ? 'nav-item active' : 'nav-item'
-            }
-            onClick={() => openSection('form')}
-          >
-            <span className="nav-dot" aria-hidden="true" />
-            TINGLOVCHI FORMASI
-          </button>
+          <FormNavigation
+            adminEntry={adminEntry}
+            formActive={activeSection === 'form'}
+          />
           <button
             className={
               activeSection === 'terms' ? 'nav-item active' : 'nav-item'
@@ -1020,7 +1016,11 @@ export default function Home() {
           <div className="breadcrumbs">
             <span>O‘quv jarayoni</span>
             <b>/</b>
-            <strong>{pageTitles[activeSection]}</strong>
+            <strong>
+              {activeSection === 'form' && adminEntry
+                ? 'Bosh admin formasi'
+                : pageTitles[activeSection]}
+            </strong>
           </div>
           <div className="top-actions">
             <button className="icon-button" aria-label="Bildirishnomalar">
@@ -2280,11 +2280,11 @@ function ListenerForm({
     <section className="listener-form-standalone">
       <div className="listener-form-intro">
         <p>
-          {isAdminForm ? 'BOSHQARUV · TINGLOVCHI FORMASI' : 'TINGLOVCHI · 2026'}
+          {isAdminForm ? 'BOSHQARUV · BOSH ADMIN FORMASI' : 'TINGLOVCHI · 2026'}
         </p>
         <h2>
           {isAdminForm
-            ? 'Admin uchun tinglovchi formasi'
+            ? 'Bosh admin formasi'
             : 'Ro‘yxatdan o‘tkazish'}
         </h2>
         <small>

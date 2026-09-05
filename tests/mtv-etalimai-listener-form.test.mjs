@@ -128,6 +128,7 @@ function setup(overrides = {}) {
     '@/lib/listener-preview': { formatAdminCohort },
     '@/lib/listener-audience': { listenerAudienceHeaders },
     '@/components/form-share-bar': { FormShareBar: () => null },
+    '@/components/form-navigation': { FormNavigation: () => null },
     '@/components/google-admin-login': { GoogleAdminLogin: () => null },
   };
   const exports = {};
@@ -228,7 +229,7 @@ test('ordinary form has no browse filters; admin form has all three', () => {
     canEdit: true,
   });
   assert.equal(filters(admin).length, 3);
-  assert.ok(textOf(admin.tree).includes('Admin uchun tinglovchi formasi'));
+  assert.ok(textOf(admin.tree).includes('Bosh admin formasi'));
   assert.ok(admin.find((node) => node.props?.href === '/?section=form').length);
 });
 
