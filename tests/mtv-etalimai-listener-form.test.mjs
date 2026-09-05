@@ -134,6 +134,7 @@ function setup(overrides = {}) {
   const exports = {};
   runInNewContext(compiled, {
     exports,
+    Error,
     File,
     FormData: TestFormData,
     window: { requestAnimationFrame: () => {} },
@@ -188,14 +189,24 @@ function setup(overrides = {}) {
       await new Promise((resolve) => setImmediate(resolve));
       render();
     },
-    async save() {
+    changeField(name, value) {
+      const control = nodes(tree).find(
+        (node) => node.props?.name === name && node.props?.type !== 'hidden',
+      );
+      assert.ok(control, name);
+      const handler = control.props.onInput || control.props.onChange;
+      assert.ok(handler, name);
+      handler({ currentTarget: { value }, target: { value } });
+      render();
+    },
+    async save(values = {}) {
       await nodes(tree)
         .find((node) => node.type === 'form')
         .props.onSubmit({
           preventDefault() {},
           currentTarget: {
             checkValidity: () => true,
-            values: { ...owner, phone: '901111111' },
+            values: { ...owner, phone: '901111111', ...values },
           },
         });
       render();
@@ -428,5 +439,126 @@ test('admin can open all groups without filters and edit a completed card', asyn
   assert.equal(
     app.find((node) => node.props?.name === 'startDate')[0].props.readOnly,
     false,
+  );
+});
+
+test('white cohort summary follows date, category and group before saving', () => {
+  const app = setup();
+  const summary = () =>
+    app.find(
+      (node) => node.props?.['aria-label'] === 'Tanlangan o‘quv guruhi',
+    )[0];
+  assert.ok(summary());
+  assert.equal(
+    app.find((node) => node.props?.className?.includes('mtv-cohort-summary'))
+      .length,
+    1,
+  );
+  assert.ok(textOf(summary()).includes('Sana tanlang'));
+  app.changeField('startDate', '2028-10-12');
+  app.changeField('group', group);
+  assert.match(textOf(summary()), /2028 yil/);
+  assert.match(textOf(summary()), /oktyabr/);
+  assert.match(textOf(summary()), /Nomzod direktor/);
+  assert.match(textOf(summary()), /56-guruh/);
+});
+
+test('new period unlocks only the draft and cancel keeps the confirmed cohort', async () => {
+  const app = setup({
+    rows: [owner, peer],
+    lockedGroup: group,
+    ownerListenerId: 'owner',
+    deviceBindingVerified: true,
+  });
+  await app.click('Boshqa oy uchun');
+  assert.equal(cardsHidden(app), false);
+  const field = (name) =>
+    app.find(
+      (node) => node.props?.name === name && node.props.type !== 'hidden',
+    )[0];
+  assert.equal(field('startDate').props.readOnly, false);
+  assert.equal(field('group').props.disabled, false);
+  assert.equal(field('phone').props.readOnly, true);
+  app.changeField('startDate', '2026-10-01');
+  const view = app.find((node) => node.props?.['aria-label'] === 'Ko‘rish')[0];
+  assert.equal(view.props.disabled, true);
+  await app.click('Avvalgi guruhga qaytish');
+  assert.equal(cardsHidden(app), true);
+  const summary = app.find(
+    (node) => node.props?.['aria-label'] === 'Biriktirilgan o‘quv guruhi',
+  )[0];
+  assert.match(textOf(summary), /sentyabr/);
+  assert.match(textOf(summary), /56-guruh/);
+});
+
+test('same-month new registration is blocked before save', async () => {
+  const app = setup({
+    rows: [owner, peer],
+    lockedGroup: group,
+    ownerListenerId: 'owner',
+    deviceBindingVerified: true,
+  });
+  await app.click('Boshqa oy uchun');
+  await app.save();
+  assert.equal(app.saves.length, 0);
+  assert.ok(textOf(app.tree).includes('Boshqa yil yoki oyni tanlang'));
+  assert.equal(cardsHidden(app), false);
+});
+
+test('successful new-period save sends the flag and freezes the new cohort', async () => {
+  const next = {
+    ...owner,
+    id: 'october',
+    startDate: '2026-10-01',
+    group: 'Nomzod direktor (57-guruh)',
+  };
+  let args;
+  const app = setup({
+    rows: [owner, peer],
+    lockedGroup: group,
+    ownerListenerId: 'owner',
+    deviceBindingVerified: true,
+    onSave: async (...values) => {
+      args = values;
+      return next;
+    },
+  });
+  await app.click('Boshqa oy uchun');
+  app.setReply(() =>
+    Response.json({ error: 'Temporary read failure' }, { status: 503 }),
+  );
+  await app.save(next);
+  assert.equal(args[2], undefined);
+  assert.equal(args[3], true);
+  assert.equal(cardsHidden(app), true);
+  const summary = app.find(
+    (node) => node.props?.['aria-label'] === 'Biriktirilgan o‘quv guruhi',
+  )[0];
+  assert.match(textOf(summary), /oktyabr/);
+  assert.match(textOf(summary), /57-guruh/);
+});
+
+test('failed new-period save keeps the draft and leaves old cohort restorable', async () => {
+  const app = setup({
+    rows: [owner, peer],
+    lockedGroup: group,
+    ownerListenerId: 'owner',
+    deviceBindingVerified: true,
+    onSave: async () => {
+      throw new Error('Saqlanmadi');
+    },
+  });
+  await app.click('Boshqa oy uchun');
+  await app.save({ startDate: '2026-10-01' });
+  assert.equal(cardsHidden(app), false);
+  assert.ok(textOf(app.tree).includes('Saqlanmadi'));
+  await app.click('Avvalgi guruhga qaytish');
+  assert.match(
+    textOf(
+      app.find(
+        (node) => node.props?.['aria-label'] === 'Biriktirilgan o‘quv guruhi',
+      )[0],
+    ),
+    /sentyabr/,
   );
 });

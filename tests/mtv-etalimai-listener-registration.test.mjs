@@ -46,6 +46,7 @@ function setup({
   binding = null,
   records = [],
   failWrite = false,
+  failCode = '',
 } = {}) {
   const writes = [];
   const rows = records.map((row) => ({ ...row }));
@@ -61,10 +62,8 @@ function setup({
         (row) =>
           row.phone_digits === values[0] &&
           row.id !== values[1] &&
-          row.group_name === values[2] &&
-          row.training_year === values[3] &&
-          row.category === values[4] &&
-          Number(row.start_date.slice(5, 7)) === values[5],
+          Number(row.start_date.slice(0, 4)) === values[2] &&
+          Number(row.start_date.slice(5, 7)) === values[3],
       );
     }
     if (query.includes('FROM listeners')) {
@@ -72,16 +71,17 @@ function setup({
         query.includes('WHERE id =')
           ? row.id === values[0]
           : row.phone_digits === values[0] &&
-            row.group_name === values[1] &&
-            row.training_year === values[2] &&
-            row.category === values[3] &&
-            Number(row.start_date.slice(5, 7)) === values[4],
+            Number(row.start_date.slice(0, 4)) === values[1] &&
+            Number(row.start_date.slice(5, 7)) === values[2],
       );
     }
     throw new Error('Unexpected query: ' + query);
   };
   sql.transaction = async (callback) => {
-    if (failWrite) throw new Error('Test database unavailable');
+    if (failWrite)
+      throw Object.assign(new Error('Test database unavailable'), {
+        code: failCode,
+      });
     const tx = (strings, ...values) => {
       const query = strings.join('?');
       writes.push({ query, values });
@@ -168,10 +168,12 @@ function setup({
       input = payload,
       editingId = '',
       audience = 'listener',
+      newPeriodRegistration = false,
     } = {}) {
       const form = new FormData();
       form.set('payload', JSON.stringify(input));
       if (editingId) form.set('editingId', editingId);
+      if (newPeriodRegistration) form.set('newPeriodRegistration', 'true');
       form.set(
         'photo',
         new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], 'test.jpg', {
@@ -285,7 +287,6 @@ for (const change of [
   { year: '2028', startDate: '2028-09-01' },
   { year: '2029', startDate: '2029-09-01' },
   { startDate: '2026-10-01' },
-  { group: group57, position: 'Yangi lavozim' },
 ]) {
   test(
     'same phone may register in another cohort ' + JSON.stringify(change),
@@ -304,8 +305,132 @@ for (const change of [
   );
 }
 
-test('same phone in the same cohort is still protected against duplicates', async () => {
+test('same phone in the same month is still protected against duplicates', async () => {
   const app = setup({ admin: true, records: [owner] });
   assert.equal((await app.save({ audience: 'admin' })).status, 409);
   assert.equal(app.writes.length, 0);
+});
+
+for (const admin of [false, true]) {
+  test(`same phone and month cannot bypass uniqueness by changing group, admin=${admin}`, async () => {
+    const app = setup({ admin, records: [owner] });
+    const result = await app.save({
+      audience: admin ? 'admin' : 'listener',
+      input: { ...payload, group: group57, startDate: '2026-09-28' },
+    });
+    assert.equal(result.status, 409);
+    assert.equal(app.writes.length, 0);
+    assert.equal(result.cookie, null);
+  });
+}
+
+for (const startDate of ['2026-10-01', '2027-09-01']) {
+  test(`bound ordinary listener can explicitly create another period ${startDate}`, async () => {
+    const app = setup({ binding: { listenerId: 'owner' }, records: [owner] });
+    const result = await app.save({
+      newPeriodRegistration: true,
+      input: {
+        ...payload,
+        startDate,
+        year: startDate.slice(0, 4),
+        group: group57,
+      },
+    });
+    assert.equal(result.status, 201);
+    assert.equal(app.rows.length, 2);
+    assert.deepEqual(app.rows[0], owner);
+    assert.notEqual(result.body.listener.id, owner.id);
+    assert.match(decodeURIComponent(result.cookie), /57-guruh/);
+  });
+}
+
+test('new-period mode rejects same month, different phone and an already occupied month', async () => {
+  const app = setup({
+    binding: { listenerId: 'owner' },
+    records: [owner, { ...owner, id: 'october', start_date: '2026-10-01' }],
+  });
+  assert.equal(
+    (
+      await app.save({
+        newPeriodRegistration: true,
+        input: { ...payload, group: group57 },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await app.save({
+        newPeriodRegistration: true,
+        input: { ...payload, startDate: '2026-11-01', phone: '902222222' },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await app.save({
+        newPeriodRegistration: true,
+        input: { ...payload, startDate: '2026-10-01' },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(app.writes.length, 0);
+});
+
+test('new-period write failure cannot replace the existing binding or data', async () => {
+  const app = setup({
+    binding: { listenerId: 'owner' },
+    records: [owner],
+    failWrite: true,
+  });
+  const result = await app.save({
+    newPeriodRegistration: true,
+    input: { ...payload, startDate: '2026-10-01' },
+  });
+  assert.equal(result.status, 503);
+  assert.equal(result.cookie, null);
+  assert.deepEqual(app.rows, [owner]);
+});
+
+test('edit duplicate guard applies across groups in the same month', async () => {
+  const app = setup({
+    admin: true,
+    records: [
+      owner,
+      { ...owner, id: 'other', phone_digits: '902222222', group_name: group57 },
+    ],
+  });
+  const result = await app.save({
+    audience: 'admin',
+    editingId: 'other',
+    input: { ...payload, group: group57 },
+  });
+  assert.equal(result.status, 409);
+  assert.equal(app.writes.length, 0);
+});
+
+test('concurrent unique-index conflict returns 409 without rebinding', async () => {
+  const app = setup({ failWrite: true, failCode: '23505' });
+  // The actual DB index is exercised separately using an isolated temporary table.
+  const migration = readFileSync(
+    new URL(
+      '../db/migrations/0007_mtv_etalimai_monthly_phone.sql',
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX IF NOT EXISTS listeners_active_month_phone_uidx/,
+  );
+  assert.match(migration, /EXTRACT\(YEAR FROM start_date\)/);
+  assert.doesNotMatch(
+    migration,
+    /\b(DELETE FROM|UPDATE listeners|TRUNCATE)\b/i,
+  );
+  const result = await app.save();
+  assert.equal(result.status, 409);
+  assert.equal(result.cookie, null);
 });

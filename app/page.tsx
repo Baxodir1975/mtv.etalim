@@ -1122,10 +1122,17 @@ export default function Home() {
                 setAdminEditingListener(null);
                 openSection('listeners');
               }}
-              onSave={async (listener, files, editingId) => {
+              onSave={async (
+                listener,
+                files,
+                editingId,
+                newPeriodRegistration,
+              ) => {
                 const payload = new FormData();
                 payload.set('payload', JSON.stringify(listener));
                 if (editingId) payload.set('editingId', editingId);
+                if (newPeriodRegistration)
+                  payload.set('newPeriodRegistration', 'true');
                 for (const [field, file] of Object.entries(files)) {
                   if (file) payload.set(field, file);
                 }
@@ -1891,6 +1898,7 @@ function ListenerForm({
     listener: ListenerDraft,
     files: ListenerUploads,
     editingId?: string,
+    newPeriodRegistration?: boolean,
   ) => Promise<ListenerRecord>;
   onCancel: () => void;
 }) {
@@ -1907,6 +1915,10 @@ function ListenerForm({
   const [selectedYear, setSelectedYear] = useState(
     initialEditingRecord?.year || '2026',
   );
+  const [selectedCategory, setSelectedCategory] = useState(
+    initialEditingRecord?.category || 'Nomzod direktor',
+  );
+  const [newPeriodRegistration, setNewPeriodRegistration] = useState(false);
   const [selectedRegion, setSelectedRegion] = useState(
     initialEditingRecord?.region || '',
   );
@@ -2000,20 +2012,49 @@ function ListenerForm({
       selectedYear,
     ],
   );
-  const groupIsLocked = !isAdminForm && Boolean(editingRecord || lockedGroup);
+  const groupIsLocked =
+    !isAdminForm &&
+    !newPeriodRegistration &&
+    Boolean(editingRecord || lockedGroup || previewCohort);
   const boundListener =
     !isAdminForm && deviceBindingVerified && !!ownerListenerId;
   const restoredOwnerId = useRef('');
+  const confirmedCohort = !isAdminForm && previewCohort;
+  const summaryLocked = Boolean(confirmedCohort) && !newPeriodRegistration;
+  const summaryYear = summaryLocked
+    ? confirmedCohort && confirmedCohort.year
+    : selectedStartDate.slice(0, 4);
+  const summaryMonth = summaryLocked
+    ? confirmedCohort && confirmedCohort.month
+    : selectedStartDate.slice(5, 7);
+  const summaryCategory = summaryLocked
+    ? (confirmedCohort && confirmedCohort.category) ||
+      matchedListener?.category ||
+      selectedCategory
+    : selectedCategory;
+  const summaryGroup = summaryLocked
+    ? confirmedCohort && confirmedCohort.group
+    : selectedGroup;
 
   // Restore the saved card on a return visit, never a second registration.
   useEffect(() => {
-    if (!boundListener || restoredOwnerId.current === ownerListenerId) return;
+    if (
+      !boundListener ||
+      newPeriodRegistration ||
+      restoredOwnerId.current === ownerListenerId
+    )
+      return;
     const owner = rows.find((row) => row.id === ownerListenerId);
     if (!owner) return;
     restoredOwnerId.current = ownerListenerId;
     if (editingRecord) return;
     const month = owner.startDate?.slice(5, 7) || '';
-    setPreviewCohort({ group: owner.group, year: owner.year, month });
+    setPreviewCohort({
+      group: owner.group,
+      year: owner.year,
+      month,
+      category: owner.category,
+    });
     setPreviewRows(
       rows.filter(
         (row) =>
@@ -2026,15 +2067,27 @@ function ListenerForm({
     setSelectedGroup(owner.group);
     setSelectedStartDate(owner.startDate || '');
     setSelectedYear(owner.year);
+    setSelectedCategory(owner.category);
     setCardsOnly(true);
     setGroupPreviewOpen(true);
-  }, [boundListener, ownerListenerId, rows, editingRecord]);
+  }, [
+    boundListener,
+    ownerListenerId,
+    rows,
+    editingRecord,
+    newPeriodRegistration,
+  ]);
 
   useEffect(() => {
-    if (!canSelectAnyGroup && !editingRecord && lockedGroup) {
+    if (
+      !canSelectAnyGroup &&
+      !editingRecord &&
+      lockedGroup &&
+      !newPeriodRegistration
+    ) {
       setSelectedGroup(lockedGroup);
     }
-  }, [canSelectAnyGroup, editingRecord, lockedGroup]);
+  }, [canSelectAnyGroup, editingRecord, lockedGroup, newPeriodRegistration]);
 
   useEffect(() => {
     if (ownerListenerId) setPreviewOwnerListenerId(ownerListenerId);
@@ -2151,6 +2204,7 @@ function ListenerForm({
   }
 
   async function openGroupPreview() {
+    if (newPeriodRegistration) return;
     const opened = await loadGroupPreview();
     if (!opened) return;
     setCardsOnly(true);
@@ -2159,11 +2213,13 @@ function ListenerForm({
   }
 
   function editRecord(row: ListenerRecord) {
+    setNewPeriodRegistration(false);
     setCardsOnly(false);
     setEditingRecord(row);
     setSelectedGroup(row.group);
     setSelectedStartDate(row.startDate || '');
     setSelectedYear(row.year || '2026');
+    setSelectedCategory(row.category);
     setSelectedRegion(row.region);
     setSelectedDistrict(row.district);
     setPhoneDigits(row.phone.replace(/\D/g, '').slice(-9));
@@ -2179,8 +2235,34 @@ function ListenerForm({
     );
   }
 
+  function beginNewPeriod() {
+    setNewPeriodRegistration(true);
+    setEditingRecord(null);
+    setSelectedGroup('');
+    setSelectedStartDate('');
+    setSelectedYear('');
+    setSelectedCategory('Nomzod direktor');
+    setSelectedRegion('');
+    setSelectedDistrict('');
+    setPhotoPreview('');
+    setCardsOnly(false);
+    setGroupPreviewOpen(false);
+    setSubmitted(false);
+    setError('');
+    setLookupError('');
+  }
+
   function cancelEditing() {
-    if (boundListener) {
+    setNewPeriodRegistration(false);
+    if (boundListener || confirmedCohort) {
+      if (previewCohort) {
+        setSelectedGroup(previewCohort.group);
+        setSelectedYear(previewCohort.year);
+        setSelectedStartDate(
+          matchedListener?.startDate ||
+            `${previewCohort.year}-${previewCohort.month}-01`,
+        );
+      }
       setEditingRecord(null);
       setCardsOnly(true);
       setGroupPreviewOpen(true);
@@ -2219,6 +2301,16 @@ function ListenerForm({
     const firstName = formText(data, 'firstName');
     const patronymic = formText(data, 'patronymic');
     const startDate = formText(data, 'startDate');
+    if (
+      newPeriodRegistration &&
+      previewCohort &&
+      startDate.slice(0, 7) === `${previewCohort.year}-${previewCohort.month}`
+    ) {
+      setError(
+        'Shu yil va oy uchun allaqachon ro‘yxatdan o‘tgansiz. Boshqa yil yoki oyni tanlang.',
+      );
+      return;
+    }
     const birthDate = formText(data, 'birthDate');
     const cleanPhone = formText(data, 'phone').replace(/\D/g, '');
     const readFile = (name: string) => {
@@ -2270,7 +2362,13 @@ function ListenerForm({
     setError('');
     setLookupError('');
     try {
-      const savedRecord = await onSave(draft, files, editingRecord?.id);
+      const savedRecord = await onSave(
+        draft,
+        files,
+        editingRecord?.id,
+        newPeriodRegistration,
+      );
+      setNewPeriodRegistration(false);
       setEditingRecord(null);
       setPhotoPreview('');
       setSubmitted(true);
@@ -2282,6 +2380,7 @@ function ListenerForm({
           group: savedRecord.group,
           year: savedRecord.year,
           month: savedRecord.startDate?.slice(5, 7) || '',
+          category: savedRecord.category,
         });
         if (!isAdminForm) setPreviewOwnerListenerId(savedRecord.id);
       }
@@ -2338,7 +2437,9 @@ function ListenerForm({
         )}
       </div>
       <form
-        key={editingRecord?.id || 'new'}
+        key={
+          editingRecord?.id || (newPeriodRegistration ? 'new-period' : 'new')
+        }
         className={`ting-form ${editingRecord ? 'is-editing' : ''} ${cardsOnly ? 'cards-only-view' : ''}`}
         onSubmit={submit}
         noValidate
@@ -2459,30 +2560,48 @@ function ListenerForm({
                     </select>
                   </label>
                 </div>
-              ) : boundListener ? (
-                <div
-                  className="mtv-cohort-lock"
-                  aria-label="Biriktirilgan o‘quv guruhi"
-                >
-                  <span>🔒 {previewCohort?.year || selectedYear} yil</span>
-                  <span>
-                    {uzbekMonthNames[
-                      Number(
-                        previewCohort?.month || selectedStartDate.slice(5, 7),
-                      ) - 1
-                    ] || 'Oy belgilanmagan'}
-                  </span>
-                  <span>{matchedListener?.category || 'Nomzod direktor'}</span>
-                  <span>{lockedGroup}</span>
-                </div>
               ) : (
-                <small className="form-lookup-help">
-                  Yil · Oy · Kategoriya · Guruh
-                </small>
+                <div
+                  className={`mtv-cohort-summary ${summaryLocked ? 'is-locked' : ''}`}
+                  aria-label={
+                    summaryLocked
+                      ? 'Biriktirilgan o‘quv guruhi'
+                      : 'Tanlangan o‘quv guruhi'
+                  }
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  <div>
+                    <span>Yil</span>
+                    <strong>
+                      {summaryYear ? `${summaryYear} yil` : 'Sana tanlang'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Oy</span>
+                    <strong>
+                      {uzbekMonthNames[Number(summaryMonth) - 1] ||
+                        'Sana tanlang'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Kategoriya</span>
+                    <strong>{summaryCategory || 'Tanlang'}</strong>
+                  </div>
+                  <div>
+                    <span>Guruh {summaryLocked && '🔒'}</span>
+                    <strong>
+                      {summaryGroup
+                        ? /\((\d+-guruh)\)/.exec(summaryGroup)?.[1] ||
+                          summaryGroup
+                        : 'Tanlang'}
+                    </strong>
+                  </div>
+                </div>
               )}
               <button
                 type="button"
-                disabled={lookingUpGroup || saving}
+                disabled={lookingUpGroup || saving || newPeriodRegistration}
                 aria-label="Ko‘rish"
                 title={
                   boundListener
@@ -2505,9 +2624,11 @@ function ListenerForm({
               </small>
             ) : (
               <small className="form-lookup-help">
-                {boundListener
-                  ? 'Birinchi saqlangan o‘quv guruhingiz biriktirilgan. «Ko‘rish» shu guruh ro‘yxatini yangilaydi. Telefon raqami guruhni o‘zgartirmaydi.'
-                  : 'Formani to‘ldirib, «Ro‘yxatga kiritish»ni bosing. «Ko‘rish»da aynan shu yil, oy, kategoriya va guruh biriktiriladi.'}
+                {newPeriodRegistration
+                  ? 'Boshqa yil yoki oyni tanlang. Yangi qabul saqlanmaguncha avvalgi yozuv va guruh o‘zgarmaydi.'
+                  : boundListener
+                    ? 'Birinchi saqlangan o‘quv guruhingiz biriktirilgan. «Ko‘rish» shu guruh ro‘yxatini yangilaydi. Telefon raqami guruhni o‘zgartirmaydi.'
+                    : 'Formani to‘ldirib, «Ro‘yxatga kiritish»ni bosing. «Ko‘rish»da aynan shu yil, oy, kategoriya va guruh biriktiriladi.'}
               </small>
             )}
             {lookupError && (
@@ -2541,6 +2662,26 @@ function ListenerForm({
               {submitted
                 ? '✓ Tinglovchi ro‘yxatga kiritildi. Guruh kartochkasi ochildi.'
                 : '👥 Guruh kartochkasi ochildi.'}
+            </div>
+          )}
+          {!isAdminForm && cardsOnly && confirmedCohort && (
+            <div className="mtv-new-period">
+              <span>Yana malaka oshirishga keldingizmi?</span>
+              <button
+                type="button"
+                disabled={saving || lookingUpGroup}
+                onClick={beginNewPeriod}
+              >
+                Boshqa oy uchun ro‘yxatdan o‘tish →
+              </button>
+            </div>
+          )}
+          {newPeriodRegistration && (
+            <div className="mtv-new-period">
+              <span>Bir telefon raqami — bir yil va oyda bitta qabul.</span>
+              <button type="button" disabled={saving} onClick={cancelEditing}>
+                Avvalgi guruhga qaytish
+              </button>
             </div>
           )}
           {groupPreviewOpen && (
@@ -2721,7 +2862,7 @@ function ListenerForm({
                     type="date"
                     required
                     readOnly={groupIsLocked}
-                    defaultValue={selectedStartDate}
+                    value={selectedStartDate}
                     onInput={(event) => {
                       const value = event.currentTarget.value;
                       setSelectedStartDate(value);
@@ -2744,7 +2885,10 @@ function ListenerForm({
                   <select
                     name="category"
                     required
-                    defaultValue={editingRecord?.category || 'Nomzod direktor'}
+                    value={selectedCategory}
+                    onChange={(event) =>
+                      setSelectedCategory(event.target.value)
+                    }
                   >
                     <option>Nomzod direktor</option>
                   </select>
@@ -2769,12 +2913,15 @@ function ListenerForm({
                       <option key={item}>{item}</option>
                     ))}
                   </select>
-                  {!canSelectAnyGroup && lockedGroup && !editingRecord && (
-                    <small className="phone-group-found">
-                      🔒 Bu qurilma uchun guruh birinchi ro‘yxatdan o‘tishdan
-                      keyin biriktirilgan.
-                    </small>
-                  )}
+                  {!canSelectAnyGroup &&
+                    lockedGroup &&
+                    !editingRecord &&
+                    !newPeriodRegistration && (
+                      <small className="phone-group-found">
+                        🔒 Bu qurilma uchun guruh birinchi ro‘yxatdan o‘tishdan
+                        keyin biriktirilgan.
+                      </small>
+                    )}
                 </label>
               </div>
             </section>
@@ -2891,6 +3038,7 @@ function ListenerForm({
                     <i>+998</i>
                     <input
                       name="phone"
+                      readOnly={newPeriodRegistration}
                       required
                       inputMode="numeric"
                       autoComplete="tel-national"
@@ -3023,7 +3171,9 @@ function ListenerForm({
           <button
             type="button"
             disabled={saving}
-            onClick={editingRecord ? cancelEditing : onCancel}
+            onClick={
+              editingRecord || newPeriodRegistration ? cancelEditing : onCancel
+            }
           >
             {editingRecord ? 'TAHRIRNI BEKOR QILISH' : 'Bekor qilish'}
           </button>

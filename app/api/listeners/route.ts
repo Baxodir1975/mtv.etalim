@@ -155,6 +155,7 @@ export async function POST(request: Request) {
     const editingValue = form.get('editingId');
     const editingId =
       typeof editingValue === 'string' ? editingValue.trim() : '';
+    const newPeriodRegistration = form.get('newPeriodRegistration') === 'true';
     const phone = phoneDigits(input.phone);
     let group = text(input, 'group', 100);
     let category = text(input, 'category', 100);
@@ -214,11 +215,30 @@ export async function POST(request: Request) {
     }
     if (!member && binding) {
       const boundRows = await sql`
-        SELECT id FROM listeners
+        SELECT id, phone_digits, start_date FROM listeners
         WHERE id = ${binding.listenerId} AND deleted_at IS NULL
         LIMIT 1
       `;
       if (!boundRows.length) binding = null;
+      else if (!editingId && newPeriodRegistration) {
+        const previous = boundRows[0];
+        const previousDate =
+          previous.start_date instanceof Date
+            ? previous.start_date.toISOString().slice(0, 10)
+            : String(previous.start_date || '').slice(0, 10);
+        if (previousDate.slice(0, 7) === startDate.slice(0, 7)) {
+          return publicError(
+            'Shu yil va oy uchun allaqachon ro‘yxatdan o‘tgansiz. Boshqa yil yoki oyni tanlang.',
+            409,
+          );
+        }
+        if (previous.phone_digits !== phone) {
+          return publicError(
+            'Yangi oy uchun avvalgi ro‘yxatdagi telefon raqamidan foydalaning.',
+            400,
+          );
+        }
+      }
     }
 
     if (!member) {
@@ -229,7 +249,7 @@ export async function POST(request: Request) {
             403,
           );
         }
-      } else if (binding) {
+      } else if (binding && !newPeriodRegistration) {
         return publicError(
           'Bu qurilma avval ro‘yxatdan o‘tgan. “Ko‘rish” orqali kartochkangizni oching.',
           409,
@@ -267,8 +287,7 @@ export async function POST(request: Request) {
             created_at, updated_at
           FROM listeners
           WHERE phone_digits = ${phone} AND deleted_at IS NULL
-            AND group_name = ${group} AND training_year = ${trainingYear}
-            AND category = ${category}
+            AND EXTRACT(YEAR FROM start_date) = ${Number(startDate.slice(0, 4))}
             AND EXTRACT(MONTH FROM start_date) = ${Number(startDate.slice(5, 7))}
           LIMIT 1
         `;
@@ -291,7 +310,7 @@ export async function POST(request: Request) {
     }
     if (!editingId && current) {
       return publicError(
-        'Shu telefon bilan aynan shu yil, oy, kategoriya va guruhda yozuv mavjud. “Ko‘rish” orqali kartochkani oching.',
+        'Shu telefon raqami bilan bu yil va oy uchun yozuv mavjud. Boshqa guruh tanlash takroriy ro‘yxatdan o‘tishga ruxsat bermaydi.',
         409,
       );
     }
@@ -301,14 +320,13 @@ export async function POST(request: Request) {
         SELECT id FROM listeners
         WHERE phone_digits = ${phone} AND id <> ${editingId}
           AND deleted_at IS NULL
-          AND group_name = ${group} AND training_year = ${trainingYear}
-          AND category = ${category}
+          AND EXTRACT(YEAR FROM start_date) = ${Number(startDate.slice(0, 4))}
           AND EXTRACT(MONTH FROM start_date) = ${Number(startDate.slice(5, 7))}
         LIMIT 1
       `;
       if (duplicate.length) {
         return publicError(
-          'Aynan shu o‘quv guruhida ushbu telefon bilan boshqa yozuv mavjud.',
+          'Ushbu telefon raqami bilan bu yil va oy uchun boshqa yozuv mavjud.',
           409,
         );
       }
@@ -504,7 +522,7 @@ export async function POST(request: Request) {
     }
     if (errorCode === '23505') {
       return publicError(
-        'Aynan shu yil, oy, kategoriya va guruhda takroriy yozuv mavjud.',
+        'Ushbu telefon raqami bilan bu yil va oy uchun yozuv allaqachon saqlangan.',
         409,
       );
     }

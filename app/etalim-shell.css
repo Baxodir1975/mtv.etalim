@@ -428,6 +428,78 @@ button {
   gap: 8px;
   padding: 0 4px;
 }
+.mtv-cohort-summary {
+  display: grid;
+  grid-template-columns: minmax(74px, 0.8fr) minmax(85px, 0.9fr) minmax(
+      120px,
+      1.5fr
+    ) minmax(88px, 1fr);
+  flex: 1 1 440px;
+  gap: 8px;
+  min-width: 0;
+}
+.mtv-cohort-summary > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #dbe8e1;
+  border-radius: 10px;
+  background: #fff;
+  color: #183d2d;
+  overflow-wrap: anywhere;
+}
+.mtv-cohort-summary span {
+  color: #506c5d;
+  font-size: 14px;
+}
+.mtv-cohort-summary strong {
+  font-size: 16px;
+  line-height: 1.35;
+  font-weight: 700;
+}
+.mtv-cohort-summary.is-locked > div {
+  border-bottom: 3px solid #86cbaa;
+}
+.mtv-new-period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+  font-size: 14px;
+  color: #395a48;
+}
+.mtv-new-period button {
+  min-height: 44px;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid #347e59;
+  border-radius: 10px;
+  color: #205438;
+  font-weight: 700;
+  text-align: left;
+}
+.mtv-new-period button:focus-visible {
+  outline: 3px solid #347e59;
+  outline-offset: 3px;
+}
+.mtv-new-period button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+@media (max-width: 640px) {
+  .mtv-cohort-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex-basis: 100%;
+  }
+  .mtv-new-period button {
+    width: 100%;
+  }
+}
 .admin-group-preview-filters {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
