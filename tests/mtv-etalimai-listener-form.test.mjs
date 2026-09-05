@@ -61,11 +61,13 @@ function setup(overrides = {}) {
     tree;
   const slots = [],
     requests = [],
-    saves = [];
+    saves = [],
+    deletes = [];
   let reply = () => responseFor([owner, peer]);
   const props = {
     isAdminForm: false,
     canEdit: false,
+    canDelete: false,
     canSelectAnyGroup: false,
     canViewAnyGroup: false,
     rows: [],
@@ -78,6 +80,9 @@ function setup(overrides = {}) {
     initialEditingRecord: null,
     onPreviewLoaded: () => {},
     onCancel: () => {},
+    onDelete: async (id) => {
+      deletes.push(id);
+    },
     onSave: async (...args) => {
       saves.push(args);
       return owner;
@@ -137,7 +142,7 @@ function setup(overrides = {}) {
     Error,
     File,
     FormData: TestFormData,
-    window: { requestAnimationFrame: () => {} },
+    window: { requestAnimationFrame: () => {}, confirm: () => true },
     fetch: async (url, options) => {
       requests.push({ url, ...options, payload: JSON.parse(options.body) });
       return reply();
@@ -162,6 +167,7 @@ function setup(overrides = {}) {
   return {
     requests,
     saves,
+    deletes,
     props,
     get tree() {
       return tree;
@@ -214,6 +220,16 @@ function setup(overrides = {}) {
     async click(label) {
       const button = nodes(tree).find(
         (node) => node.type === 'button' && textOf(node).includes(label),
+      );
+      assert.ok(button, 'Missing button ' + label);
+      button.props.onClick();
+      await new Promise((resolve) => setImmediate(resolve));
+      render();
+    },
+    async clickAria(label) {
+      const button = nodes(tree).find(
+        (node) =>
+          node.type === 'button' && node.props?.['aria-label'] === label,
       );
       assert.ok(button, 'Missing button ' + label);
       button.props.onClick();
@@ -439,6 +455,92 @@ test('admin can open all groups without filters and edit a completed card', asyn
   assert.equal(
     app.find((node) => node.props?.name === 'startDate')[0].props.readOnly,
     false,
+  );
+});
+
+test('only authorized head admins get an F.I.Sh. management card with edit and archive actions', async () => {
+  const ordinary = setup();
+  await ordinary.view();
+  assert.equal(
+    ordinary.find(
+      (node) => node.props?.className === 'listener-member-name-button',
+    ).length,
+    0,
+  );
+
+  const editor = setup({
+    isAdminForm: true,
+    canViewAnyGroup: true,
+    canSelectAnyGroup: true,
+    canEdit: true,
+    canDelete: true,
+  });
+  await editor.view();
+  const nameButton = editor.find(
+    (node) => node.props?.className === 'listener-member-name-button',
+  )[0];
+  assert.ok(nameButton);
+  assert.equal(
+    nameButton.props['aria-label'],
+    'Test Listener boshqaruv kartochkasini ochish',
+  );
+
+  await editor.clickAria('Test Listener boshqaruv kartochkasini ochish');
+  assert.equal(
+    editor.find((node) => node.props?.className === 'listener-admin-card')
+      .length,
+    1,
+  );
+  assert.ok(
+    textOf(editor.tree).includes('BOSH ADMIN · TINGLOVCHI KARTOCHKASI'),
+  );
+  assert.equal(
+    editor.find(
+      (node) => node.props?.['aria-label'] === 'Tinglovchini tahrirlash',
+    ).length,
+    1,
+  );
+  assert.equal(
+    editor.find(
+      (node) => node.props?.['aria-label'] === 'Tinglovchini o‘chirish',
+    ).length,
+    1,
+  );
+
+  await editor.clickAria('Tinglovchini tahrirlash');
+  assert.equal(cardsHidden(editor), false);
+  assert.equal(
+    editor.find((node) => node.props?.className === 'listener-admin-card')
+      .length,
+    0,
+  );
+
+  const archivist = setup({
+    isAdminForm: true,
+    canViewAnyGroup: true,
+    canSelectAnyGroup: true,
+    canDelete: true,
+  });
+  await archivist.view();
+  await archivist.clickAria('Test Listener boshqaruv kartochkasini ochish');
+  assert.equal(
+    archivist.find(
+      (node) => node.props?.['aria-label'] === 'Tinglovchini tahrirlash',
+    ).length,
+    0,
+  );
+  await archivist.clickAria('Tinglovchini o‘chirish');
+  assert.deepEqual(archivist.deletes, ['owner']);
+  assert.equal(
+    archivist.find((node) => node.props?.className === 'listener-admin-card')
+      .length,
+    0,
+  );
+  assert.equal(
+    archivist.find(
+      (node) => node.props?.className === 'listener-member-name-button',
+    ).length,
+    1,
   );
 });
 

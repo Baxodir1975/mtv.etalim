@@ -785,6 +785,20 @@ export default function Home() {
     setServerError('');
   }
 
+  async function archiveListener(listenerId: string) {
+    const response = await fetch(
+      `/api/admin/listeners/${encodeURIComponent(listenerId)}`,
+      { method: 'DELETE' },
+    );
+    const result = (await response.json()) as { error?: string };
+    if (!response.ok) {
+      throw new Error(result.error || 'Tinglovchini o‘chirib bo‘lmadi.');
+    }
+    setListeners((current) =>
+      current.filter((listener) => listener.id !== listenerId),
+    );
+  }
+
   async function saveRoleMembers(nextMembers: RoleMember[]) {
     if (roleSavePending.current) return;
     roleSavePending.current = true;
@@ -1068,21 +1082,7 @@ export default function Home() {
                 setAdminEditingListener(listener);
                 openSection('form');
               }}
-              onDelete={async (listenerId) => {
-                const response = await fetch(
-                  `/api/admin/listeners/${encodeURIComponent(listenerId)}`,
-                  { method: 'DELETE' },
-                );
-                const result = (await response.json()) as { error?: string };
-                if (!response.ok) {
-                  throw new Error(
-                    result.error || 'Tinglovchini o‘chirib bo‘lmadi.',
-                  );
-                }
-                setListeners((current) =>
-                  current.filter((listener) => listener.id !== listenerId),
-                );
-              }}
+              onDelete={archiveListener}
               telegramGroupUrl={telegramGroupUrl}
               canEditTelegram={can('Manbalar:Tahrirlash')}
               onTelegramGroupUrlChange={async (value) => {
@@ -1094,6 +1094,7 @@ export default function Home() {
             <ListenerForm
               isAdminForm={adminEntry}
               canEdit={can('Tinglovchilar:Tahrirlash')}
+              canDelete={can('Tinglovchilar:O‘chirish')}
               rows={listeners}
               telegramGroupUrl={telegramGroupUrl}
               lockedGroup={deviceBindingVerified ? deviceGroup : ''}
@@ -1122,6 +1123,7 @@ export default function Home() {
                 setAdminEditingListener(null);
                 openSection('listeners');
               }}
+              onDelete={archiveListener}
               onSave={async (
                 listener,
                 files,
@@ -1863,6 +1865,7 @@ function groupPreviewTitle(
 function ListenerForm({
   isAdminForm,
   canEdit,
+  canDelete,
   rows,
   telegramGroupUrl,
   lockedGroup,
@@ -1874,11 +1877,13 @@ function ListenerForm({
   districtOptions,
   initialEditingRecord,
   onPreviewLoaded,
+  onDelete,
   onSave,
   onCancel,
 }: {
   isAdminForm: boolean;
   canEdit: boolean;
+  canDelete: boolean;
   rows: ListenerRecord[];
   telegramGroupUrl: string;
   lockedGroup: string;
@@ -1894,6 +1899,7 @@ function ListenerForm({
     group: string;
     ownerListenerId: string;
   }) => void;
+  onDelete: (listenerId: string) => Promise<void>;
   onSave: (
     listener: ListenerDraft,
     files: ListenerUploads,
@@ -1980,6 +1986,10 @@ function ListenerForm({
     initialEditingRecord,
   );
   const [zoomedRecord, setZoomedRecord] = useState<ListenerRecord | null>(null);
+  const [selectedRecord, setSelectedRecord] = useState<ListenerRecord | null>(
+    null,
+  );
+  const [deletingRecordId, setDeletingRecordId] = useState('');
 
   const matchedListener = useMemo(
     () =>
@@ -2035,6 +2045,7 @@ function ListenerForm({
   const summaryGroup = summaryLocked
     ? confirmedCohort && confirmedCohort.group
     : selectedGroup;
+  const canManagePreviewCards = isAdminForm && (canEdit || canDelete);
 
   // Restore the saved card on a return visit, never a second registration.
   useEffect(() => {
@@ -2213,6 +2224,7 @@ function ListenerForm({
   }
 
   function editRecord(row: ListenerRecord) {
+    setSelectedRecord(null);
     setNewPeriodRegistration(false);
     setCardsOnly(false);
     setEditingRecord(row);
@@ -2233,6 +2245,48 @@ function ListenerForm({
         .querySelector('.ting-form-body')
         ?.scrollTo({ top: 0, behavior: 'smooth' }),
     );
+  }
+
+  function openRecordCard(row: ListenerRecord) {
+    if (!canManagePreviewCards) return;
+    setSelectedRecord(row);
+    setError('');
+    setLookupError('');
+  }
+
+  function closeRecordCard() {
+    if (deletingRecordId) return;
+    setSelectedRecord(null);
+  }
+
+  async function deleteRecord(row: ListenerRecord) {
+    if (!canDelete || deletingRecordId) return;
+    if (
+      !window.confirm(
+        `${row.name} ma’lumotini arxivga o‘tkazishni tasdiqlaysizmi? Uni keyin tiklash mumkin.`,
+      )
+    )
+      return;
+    setDeletingRecordId(row.id);
+    setError('');
+    try {
+      await onDelete(row.id);
+      setPreviewRows((current) =>
+        current.filter((listener) => listener.id !== row.id),
+      );
+      setPreviewOwnerListenerId((current) =>
+        current === row.id ? '' : current,
+      );
+      setSelectedRecord((current) => (current?.id === row.id ? null : current));
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : 'Tinglovchini o‘chirib bo‘lmadi.',
+      );
+    } finally {
+      setDeletingRecordId('');
+    }
   }
 
   function beginNewPeriod() {
@@ -2402,6 +2456,10 @@ function ListenerForm({
       setSaving(false);
     }
   }
+
+  const selectedRecordProgress = selectedRecord
+    ? listenerProgress(selectedRecord)
+    : null;
 
   return (
     <section className="listener-form-standalone">
@@ -2746,7 +2804,25 @@ function ListenerForm({
                           </div>
                           <div className="listener-member-info">
                             <div className="listener-member-name">
-                              {row.name || 'Noma’lum'}{' '}
+                              {canManagePreviewCards ? (
+                                <button
+                                  type="button"
+                                  className="listener-member-name-button"
+                                  aria-label={`${row.name || 'Noma’lum'} boshqaruv kartochkasini ochish`}
+                                  title="Tahrirlash yoki o‘chirish kartochkasini ochish"
+                                  onClick={() => openRecordCard(row)}
+                                >
+                                  <span>{row.name || 'Noma’lum'}</span>
+                                  <span
+                                    className="listener-member-name-open"
+                                    aria-hidden="true"
+                                  >
+                                    ↗
+                                  </span>
+                                </button>
+                              ) : (
+                                <span>{row.name || 'Noma’lum'}</span>
+                              )}{' '}
                               {isMe && (
                                 <em
                                   className={
@@ -2845,6 +2921,124 @@ function ListenerForm({
                 </div>
               )}
             </section>
+          )}
+          {selectedRecord && (
+            <dialog
+              className="listener-admin-card"
+              open
+              aria-labelledby={`listener-admin-card-title-${selectedRecord.id}`}
+              onCancel={(event) => {
+                event.preventDefault();
+                closeRecordCard();
+              }}
+            >
+              <article className="listener-admin-card-sheet">
+                <header>
+                  <div>
+                    <small>BOSH ADMIN · TINGLOVCHI KARTOCHKASI</small>
+                    <h4 id={`listener-admin-card-title-${selectedRecord.id}`}>
+                      {selectedRecord.name || 'Noma’lum'}
+                    </h4>
+                    <p>
+                      {formatAdminCohort({
+                        group: selectedRecord.group,
+                        year: selectedRecord.year,
+                        month: selectedRecord.startDate?.slice(5, 7) || '',
+                      })}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="listener-admin-card-close"
+                    aria-label="Kartochkani yopish"
+                    disabled={Boolean(deletingRecordId)}
+                    onClick={closeRecordCard}
+                  >
+                    ×
+                  </button>
+                </header>
+                <div className="listener-admin-card-details">
+                  <div className="listener-admin-card-photo" aria-hidden="true">
+                    {selectedRecord.photo ? (
+                      <img src={selectedRecord.photo} alt="" />
+                    ) : (
+                      '👤'
+                    )}
+                    <span
+                      className={
+                        selectedRecordProgress?.complete
+                          ? 'complete'
+                          : 'incomplete'
+                      }
+                    >
+                      {selectedRecordProgress?.complete
+                        ? 'TO‘LIQ'
+                        : 'TO‘LDIRILMOQDA'}
+                    </span>
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>Ish joyi (MTM)</dt>
+                      <dd>{selectedRecord.workplace || 'Kiritilmagan'}</dd>
+                    </div>
+                    <div>
+                      <dt>Lavozim</dt>
+                      <dd>{selectedRecord.position || 'Kiritilmagan'}</dd>
+                    </div>
+                    <div>
+                      <dt>Hudud</dt>
+                      <dd>
+                        {selectedRecord.region || 'Kiritilmagan'}
+                        {selectedRecord.district
+                          ? `, ${selectedRecord.district}`
+                          : ''}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Telefon</dt>
+                      <dd>{selectedRecord.phone || 'Kiritilmagan'}</dd>
+                    </div>
+                  </dl>
+                </div>
+                {selectedRecord.note && (
+                  <p className="listener-admin-card-note">
+                    <b>Izoh:</b> {selectedRecord.note}
+                  </p>
+                )}
+                <footer>
+                  <span>
+                    To‘ldirilgan {selectedRecordProgress?.completed ?? 0}/
+                    {selectedRecordProgress?.total ?? 0}
+                  </span>
+                  <div className="listener-admin-card-actions">
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className="listener-admin-card-edit"
+                        aria-label="Tinglovchini tahrirlash"
+                        disabled={Boolean(deletingRecordId)}
+                        onClick={() => editRecord(selectedRecord)}
+                      >
+                        ✎ TAHRIRLASH
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        type="button"
+                        className="listener-admin-card-delete"
+                        aria-label="Tinglovchini o‘chirish"
+                        disabled={Boolean(deletingRecordId)}
+                        onClick={() => void deleteRecord(selectedRecord)}
+                      >
+                        {deletingRecordId === selectedRecord.id
+                          ? 'ARXIVLANMOQDA…'
+                          : '🗑 O‘CHIRISH'}
+                      </button>
+                    )}
+                  </div>
+                </footer>
+              </article>
+            </dialog>
           )}
           <div className="form-entry-sections" hidden={cardsOnly}>
             <section className="ting-form-section">
