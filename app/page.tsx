@@ -1922,10 +1922,28 @@ function ListenerForm({
     group: '',
     year: '',
     month: '',
+    category: '',
   });
-  const previewGroups = [
+  const allPreviewGroups = [
     ...new Set([...availableGroups, ...rows.map((row) => row.group)]),
   ].filter(Boolean);
+  const groupCategory = (group: string) =>
+    /^(.*?)\s*\(\d+-guruh\)$/i.exec(group)?.[1]?.trim() || '';
+  const previewCategories = [
+    ...new Set([
+      ...rows.map((row) => row.category),
+      ...allPreviewGroups.map(groupCategory),
+    ]),
+  ].filter(Boolean);
+  const previewGroups = allPreviewGroups.filter(
+    (group) =>
+      !adminPreviewFilters.category ||
+      groupCategory(group) === adminPreviewFilters.category ||
+      rows.some(
+        (row) =>
+          row.group === group && row.category === adminPreviewFilters.category,
+      ),
+  );
   const previewYears = [
     ...new Set([selectedYear, ...rows.map((row) => row.year)]),
   ]
@@ -1938,6 +1956,7 @@ function ListenerForm({
     group: string;
     year: string;
     month: string;
+    category?: string;
   } | null>(null);
   const [previewOwnerListenerId, setPreviewOwnerListenerId] =
     useState(ownerListenerId);
@@ -2068,6 +2087,7 @@ function ListenerForm({
                 phone: canViewAnyGroup ? '' : phoneDigits,
                 group: previewGroup,
                 year: previewYear,
+                category: record?.category ?? adminPreviewFilters.category,
                 month: record
                   ? record.startDate?.slice(5, 7)
                   : canViewAnyGroup
@@ -2081,7 +2101,12 @@ function ListenerForm({
       const result = (await response.json()) as {
         found?: boolean;
         group?: string;
-        cohort?: { group: string; year: string; month: string };
+        cohort?: {
+          group: string;
+          year: string;
+          month: string;
+          category?: string;
+        };
         listeners?: ListenerRecord[];
         ownerListenerId?: string;
         error?: string;
@@ -2096,7 +2121,10 @@ function ListenerForm({
       setPreviewCohort(result.cohort);
       setPreviewOwnerListenerId(previewOwnerId);
       if (canViewAnyGroup) {
-        setAdminPreviewFilters(result.cohort);
+        setAdminPreviewFilters({
+          ...result.cohort,
+          category: result.cohort.category || '',
+        });
       } else {
         setSelectedGroup(result.cohort.group);
         setSelectedYear(result.cohort.year);
@@ -2282,11 +2310,7 @@ function ListenerForm({
         <p>
           {isAdminForm ? 'BOSHQARUV · BOSH ADMIN FORMASI' : 'TINGLOVCHI · 2026'}
         </p>
-        <h2>
-          {isAdminForm
-            ? 'Bosh admin formasi'
-            : 'Ro‘yxatdan o‘tkazish'}
-        </h2>
+        <h2>{isAdminForm ? 'Bosh admin formasi' : 'Ro‘yxatdan o‘tkazish'}</h2>
         <small>
           Forma va kartochkalar E-talim manbasidan olinib, MTV uchun
           moslashtirildi.
@@ -2348,62 +2372,92 @@ function ListenerForm({
             <div className="form-lookup-bar">
               {canViewAnyGroup ? (
                 <div className="admin-group-preview-filters">
-                  <select
-                    aria-label="Ko‘rish uchun guruh"
-                    value={adminPreviewFilters.group}
-                    disabled={lookingUpGroup}
-                    onChange={(event) => {
-                      setAdminPreviewFilters((current) => ({
-                        ...current,
-                        group: event.target.value,
-                      }));
-                      setLookupError('');
-                    }}
-                  >
-                    <option value="">Barcha guruhlar</option>
-                    {previewGroups.map((group) => (
-                      <option key={group}>{group}</option>
-                    ))}
-                  </select>
-                  <select
-                    aria-label="Ko‘rish uchun yil"
-                    value={adminPreviewFilters.year}
-                    disabled={lookingUpGroup}
-                    onChange={(event) => {
-                      setAdminPreviewFilters((current) => ({
-                        ...current,
-                        year: event.target.value,
-                      }));
-                      setLookupError('');
-                    }}
-                  >
-                    <option value="">Barcha yillar</option>
-                    {previewYears.map((year) => (
-                      <option key={year}>{year}</option>
-                    ))}
-                  </select>
-                  <select
-                    aria-label="Ko‘rish uchun oy"
-                    value={adminPreviewFilters.month}
-                    disabled={lookingUpGroup}
-                    onChange={(event) => {
-                      setAdminPreviewFilters((current) => ({
-                        ...current,
-                        month: event.target.value,
-                      }));
-                      setLookupError('');
-                    }}
-                  >
-                    <option value="">Barcha oylar</option>
-                    {uzbekMonthNames.map((month, index) => (
-                      <option
-                        key={month}
-                        value={String(index + 1).padStart(2, '0')}
-                      >
-                        {month}
-                      </option>
-                    ))}
-                  </select>
+                  <label>
+                    <span>Yil</span>
+                    <select
+                      aria-label="Ko‘rish uchun yil"
+                      value={adminPreviewFilters.year}
+                      disabled={lookingUpGroup}
+                      onChange={(event) => {
+                        setAdminPreviewFilters((current) => ({
+                          ...current,
+                          year: event.target.value,
+                        }));
+                        setLookupError('');
+                      }}
+                    >
+                      <option value="">Barcha yillar</option>
+                      {previewYears.map((year) => (
+                        <option key={year}>{year}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Oy</span>
+                    <select
+                      aria-label="Ko‘rish uchun oy"
+                      value={adminPreviewFilters.month}
+                      disabled={lookingUpGroup}
+                      onChange={(event) => {
+                        setAdminPreviewFilters((current) => ({
+                          ...current,
+                          month: event.target.value,
+                        }));
+                        setLookupError('');
+                      }}
+                    >
+                      <option value="">Barcha oylar</option>
+                      {uzbekMonthNames.map((month, index) => (
+                        <option
+                          key={month}
+                          value={String(index + 1).padStart(2, '0')}
+                        >
+                          {month}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Kategoriya</span>
+                    <select
+                      aria-label="Ko‘rish uchun kategoriya"
+                      value={adminPreviewFilters.category}
+                      disabled={lookingUpGroup}
+                      onChange={(event) => {
+                        setAdminPreviewFilters((current) => ({
+                          ...current,
+                          category: event.target.value,
+                          group: '',
+                        }));
+                        setLookupError('');
+                      }}
+                    >
+                      <option value="">Barcha kategoriyalar</option>
+                      {previewCategories.map((category) => (
+                        <option key={category}>{category}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Guruh</span>
+                    <select
+                      aria-label="Ko‘rish uchun guruh"
+                      value={adminPreviewFilters.group}
+                      disabled={lookingUpGroup}
+                      onChange={(event) => {
+                        setAdminPreviewFilters((current) => ({
+                          ...current,
+                          group: event.target.value,
+                        }));
+                        setLookupError('');
+                      }}
+                    >
+                      <option value="">Barcha guruhlar</option>
+                      {previewGroups.map((group) => (
+                        <option key={group}>{group}</option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
               ) : boundListener ? (
                 <div

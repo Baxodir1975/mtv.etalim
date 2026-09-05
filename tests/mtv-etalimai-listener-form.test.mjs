@@ -173,6 +173,14 @@ function setup(overrides = {}) {
       Object.assign(props, next);
       render();
     },
+    changeFilter(name, value) {
+      const field = nodes(tree).find(
+        (node) => node.props?.['aria-label'] === 'Ko‘rish uchun ' + name,
+      );
+      assert.ok(field, 'Missing filter: ' + name);
+      field.props.onChange({ target: { value } });
+      render();
+    },
     async view() {
       nodes(tree)
         .find((node) => node.props?.['aria-label'] === 'Ko‘rish')
@@ -231,7 +239,7 @@ test('Telegram joining is shown only on the ordinary listener form', () => {
   }
 });
 
-test('ordinary form has no browse filters; admin form has all three', () => {
+test('ordinary form has no browse filters; admin has year/month above category/group', () => {
   assert.equal(filters(setup()).length, 0);
   assert.equal(
     setup().find(
@@ -246,9 +254,65 @@ test('ordinary form has no browse filters; admin form has all three', () => {
     canSelectAnyGroup: true,
     canEdit: true,
   });
-  assert.equal(filters(admin).length, 3);
+  assert.equal(filters(admin).length, 4);
+  assert.deepEqual(
+    filters(admin).map((node) => node.props['aria-label']),
+    [
+      'Ko‘rish uchun yil',
+      'Ko‘rish uchun oy',
+      'Ko‘rish uchun kategoriya',
+      'Ko‘rish uchun guruh',
+    ],
+  );
   assert.ok(textOf(admin.tree).includes('Bosh admin formasi'));
   assert.ok(admin.find((node) => node.props?.href === '/?section=form').length);
+});
+
+test('admin category narrows groups and all four filters reach the server', async () => {
+  const otherGroup = 'Metodist (10-guruh)';
+  const app = setup({
+    isAdminForm: true,
+    canViewAnyGroup: true,
+    canSelectAnyGroup: true,
+    rows: [owner, { ...peer, category: 'Metodist', group: otherGroup }],
+    availableGroups: [group, otherGroup],
+  });
+  app.changeFilter('guruh', group);
+  app.changeFilter('kategoriya', 'Metodist');
+  const groupField = () =>
+    filters(app).find(
+      (node) => node.props['aria-label'] === 'Ko‘rish uchun guruh',
+    );
+  assert.equal(groupField().props.value, '');
+  assert.ok(textOf(groupField()).includes(otherGroup));
+  assert.ok(!textOf(groupField()).includes(group));
+  app.changeFilter('yil', '2026');
+  app.changeFilter('oy', '09');
+  app.changeFilter('guruh', otherGroup);
+  app.setReply(() =>
+    Response.json({
+      found: true,
+      cohort: {
+        group: otherGroup,
+        year: '2026',
+        month: '09',
+        category: 'Metodist',
+      },
+      listeners: [],
+    }),
+  );
+  await app.view();
+  const payload = app.requests[0].payload;
+  assert.equal(payload.year, '2026');
+  assert.equal(payload.month, '09');
+  assert.equal(payload.category, 'Metodist');
+  assert.equal(payload.group, otherGroup);
+  assert.ok(
+    textOf(app.tree).includes('Metodist (2026 yil, sentyabr, 10-guruh)'),
+  );
+  app.changeFilter('kategoriya', '');
+  assert.equal(groupField().props.value, '');
+  assert.ok(textOf(groupField()).includes(group));
 });
 
 test('returning bound listener sees own cards, not another registration', async () => {

@@ -304,6 +304,47 @@ test('admin heading describes only the chosen scope, never a guessed majority mo
   );
 });
 
+test('admin category filtering works alone and with year/month/group', async () => {
+  const other = {
+    ...fixtures[0],
+    id: 'methodist',
+    category: 'Metodist',
+    group_name: 'Metodist (10-guruh)',
+  };
+  const app = setup({ admin: true, records: [...fixtures, other] });
+  const categoryOnly = await app.lookup({ category: 'Metodist' });
+  assert.equal(categoryOnly.status, 200);
+  assert.deepEqual(
+    categoryOnly.body.listeners.map((row) => row.id),
+    ['methodist'],
+  );
+  assert.equal(categoryOnly.body.cohort.category, 'Metodist');
+  const exact = await app.lookup({
+    category: 'Metodist',
+    year: '2026',
+    month: '09',
+    group: other.group_name,
+  });
+  assert.deepEqual(
+    exact.body.listeners.map((row) => row.id),
+    ['methodist'],
+  );
+  assert.deepEqual(
+    (await app.lookup({ category: 'Metodist', group: group56 })).body.listeners,
+    [],
+  );
+  assert.equal((await app.lookup()).body.listeners.length, 5);
+  assert.equal(
+    formatAdminCohort({
+      group: '',
+      year: '2026',
+      month: '09',
+      category: 'Metodist',
+    }),
+    'Metodist · Barcha guruhlar · 2026 yil, sentyabr',
+  );
+});
+
 test('public form in an admin browser still stays in the device cohort', async () => {
   const result = await setup({
     admin: true,
@@ -351,7 +392,11 @@ test('category and registration identity prevent cross-cohort access even with t
   const result = await setup({
     device: { listenerId: 'owner' },
     records,
-  }).lookup({ phone: records[3].phone_digits, group: group57 });
+  }).lookup({
+    phone: records[3].phone_digits,
+    group: group57,
+    category: 'Different course',
+  });
   assert.deepEqual(
     result.body.listeners.map((row) => row.id),
     ['owner', 'peer'],

@@ -19,6 +19,7 @@ type LookupInput = {
   group?: unknown;
   year?: unknown;
   month?: unknown;
+  category?: unknown;
   startDate?: unknown;
 };
 
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
     let year = safeText(input.year, 4);
     let month = safeText(input.month, 2);
     let ownerListenerId = canViewAll ? '' : device?.listenerId || '';
-    let category = '';
+    let category = safeText(input.category, 100);
     const startDate = safeText(input.startDate, 10);
     if (!month && /^\d{4}-(\d{2})-\d{2}$/.test(startDate)) {
       month = startDate.slice(5, 7);
@@ -111,7 +112,7 @@ export async function POST(request: Request) {
         AND (${canViewAll && !group} OR group_name = ${group})
         AND (${canViewAll && !year} OR training_year = ${year})
         AND (${canViewAll && !month} OR COALESCE(TO_CHAR(start_date, 'MM'), '') = ${month})
-        AND (${canViewAll} OR category = ${category})
+        AND (${canViewAll && !category} OR category = ${category})
       ORDER BY created_at ASC
       LIMIT ${canViewAll ? 1000 : 250}
     `;
