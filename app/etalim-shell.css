@@ -423,8 +423,34 @@ button {
 }
 .form-lookup-bar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 0 4px;
+}
+.admin-group-preview-filters {
+  display: flex;
+  flex: 1 1 320px;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.admin-group-preview-filters select {
+  flex: 1 1 100px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px;
+  border: 0;
+  border-radius: 10px;
+  background: #fff;
+  color: #1a2e1f;
+  font-size: 14px;
+}
+.admin-group-preview-filters select:first-child {
+  flex-basis: 100%;
+}
+.admin-group-preview-filters select:focus-visible {
+  outline: 3px solid #8bc6ff;
+  outline-offset: 2px;
 }
 .form-lookup-bar input {
   min-width: 0;

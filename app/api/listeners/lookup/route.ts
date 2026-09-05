@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     let group = safeText(input.group, 100);
     let year = safeText(input.year, 4);
     let month = safeText(input.month, 2);
-    let ownerListenerId = device?.listenerId || '';
+    let ownerListenerId = canViewAll ? '' : device?.listenerId || '';
     let openedByPhone = false;
     const startDate = safeText(input.startDate, 10);
     if (!month && /^\d{4}-(\d{2})-\d{2}$/.test(startDate)) {
@@ -99,8 +99,18 @@ export async function POST(request: Request) {
       month = String(source.training_month || '');
     }
 
-    if (!group || !/^\d{4}$/.test(year) || !/^\d{2}$/.test(month)) {
+    if (
+      !canViewAll &&
+      (!group || !/^\d{4}$/.test(year) || !/^\d{2}$/.test(month))
+    ) {
       return publicError('Guruh, yil va oy to‘liq tanlanmagan.', 400);
+    }
+    if (
+      canViewAll &&
+      ((year && !/^\d{4}$/.test(year)) ||
+        (month && !/^(0[1-9]|1[0-2])$/.test(month)))
+    ) {
+      return publicError('Yil yoki oy noto‘g‘ri tanlangan.', 400);
     }
 
     const rows = await sql`
@@ -112,11 +122,11 @@ export async function POST(request: Request) {
         created_at, updated_at
       FROM listeners
       WHERE deleted_at IS NULL
-        AND group_name = ${group}
-        AND training_year = ${year}
-        AND COALESCE(TO_CHAR(start_date, 'MM'), '') = ${month}
+        AND (${canViewAll && !group} OR group_name = ${group})
+        AND (${canViewAll && !year} OR training_year = ${year})
+        AND (${canViewAll && !month} OR COALESCE(TO_CHAR(start_date, 'MM'), '') = ${month})
       ORDER BY created_at ASC
-      LIMIT 250
+      LIMIT ${canViewAll ? 1000 : 250}
     `;
 
     const listeners = (rows as ListenerDbRow[]).map((row) =>
@@ -128,6 +138,7 @@ export async function POST(request: Request) {
       found: true,
       group,
       cohort: { group, year, month },
+      canViewAll,
       listeners,
       ownerListenerId,
     });

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { formatAdminCohort } from '@/lib/listener-preview';
 import {
   useEffect,
   useMemo,
@@ -833,6 +834,7 @@ export default function Home() {
   const can = (permission: string) =>
     Boolean(adminViewer?.permissions.includes(permission));
   const canSelectAnyGroup = can('Tinglovchilar:Kiritish');
+  const canViewAnyGroup = can('Tinglovchilar:Ko‘rish');
   const profileName = adminViewer?.name ?? 'Tinglovchi';
   const profileEmail = adminViewer?.email ?? 'Ommaviy ro‘yxatdan o‘tish';
   const profileInitials = adminViewer ? initialsFor(adminViewer.name) : 'T';
@@ -1088,6 +1090,7 @@ export default function Home() {
               ownerListenerId={deviceListenerId}
               deviceBindingVerified={deviceBindingVerified}
               canSelectAnyGroup={canSelectAnyGroup}
+              canViewAnyGroup={canViewAnyGroup}
               availableGroups={listenerSources.groups}
               districtOptions={listenerSources.districtsByRegion}
               initialEditingRecord={adminEditingListener}
@@ -1096,7 +1099,7 @@ export default function Home() {
                 group,
                 ownerListenerId: previewOwnerId,
               }) => {
-                if (!canSelectAnyGroup) {
+                if (!canViewAnyGroup) {
                   setListeners(previewListeners);
                   if (previewOwnerId) {
                     setDeviceGroup(group);
@@ -1875,6 +1878,7 @@ function ListenerForm({
   ownerListenerId,
   deviceBindingVerified,
   canSelectAnyGroup,
+  canViewAnyGroup,
   availableGroups,
   districtOptions,
   initialEditingRecord,
@@ -1888,6 +1892,7 @@ function ListenerForm({
   ownerListenerId: string;
   deviceBindingVerified: boolean;
   canSelectAnyGroup: boolean;
+  canViewAnyGroup: boolean;
   availableGroups: string[];
   districtOptions: Record<string, string[]>;
   initialEditingRecord: ListenerRecord | null;
@@ -1926,6 +1931,21 @@ function ListenerForm({
     initialEditingRecord?.phone.replace(/\D/g, '').slice(-9) || '',
   );
   const [lookingUpGroup, setLookingUpGroup] = useState(false);
+  // Browsing filters must never overwrite an in-progress registration.
+  const [adminPreviewFilters, setAdminPreviewFilters] = useState({
+    group: '',
+    year: '',
+    month: '',
+  });
+  const previewGroups = [
+    ...new Set([...availableGroups, ...rows.map((row) => row.group)]),
+  ].filter(Boolean);
+  const previewYears = [
+    ...new Set([selectedYear, ...rows.map((row) => row.year)]),
+  ]
+    .filter((year) => /^\d{4}$/.test(year))
+    .sort()
+    .reverse();
   const [groupPreviewOpen, setGroupPreviewOpen] = useState(false);
   const [previewRows, setPreviewRows] = useState<ListenerRecord[]>([]);
   const [previewCohort, setPreviewCohort] = useState<{
@@ -1961,15 +1981,18 @@ function ListenerForm({
   const detectedGroupRows = previewRows;
   const detectedGroupTitle = useMemo(
     () =>
-      groupPreviewTitle(
-        detectedGroup,
-        detectedGroupRows,
-        previewCohort?.year || selectedYear,
-        previewCohort
-          ? `${previewCohort.year}-${previewCohort.month}-01`
-          : selectedStartDate,
-      ),
+      canViewAnyGroup && previewCohort
+        ? formatAdminCohort(previewCohort)
+        : groupPreviewTitle(
+            detectedGroup,
+            detectedGroupRows,
+            previewCohort?.year || selectedYear,
+            previewCohort
+              ? `${previewCohort.year}-${previewCohort.month}-01`
+              : selectedStartDate,
+          ),
     [
+      canViewAnyGroup,
       detectedGroup,
       detectedGroupRows,
       previewCohort,
@@ -2011,20 +2034,32 @@ function ListenerForm({
   }
 
   async function loadGroupPreview(record?: ListenerRecord) {
-    const previewGroup = record?.group || selectedGroup || lockedGroup;
+    const previewGroup =
+      record?.group ??
+      (canViewAnyGroup
+        ? adminPreviewFilters.group
+        : selectedGroup || lockedGroup);
     const previewStartDate = record?.startDate || selectedStartDate;
     const previewYear =
-      record?.year || selectedYear || previewStartDate.slice(0, 4);
+      record?.year ??
+      (canViewAnyGroup
+        ? adminPreviewFilters.year
+        : selectedYear || previewStartDate.slice(0, 4));
     setLookingUpGroup(true);
     try {
       const response = await fetch('/api/listeners/lookup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          phone: canSelectAnyGroup ? '' : phoneDigits,
+          phone: canViewAnyGroup ? '' : phoneDigits,
           group: previewGroup,
           year: previewYear,
-          startDate: previewStartDate,
+          month: record
+            ? record.startDate?.slice(5, 7)
+            : canViewAnyGroup
+              ? adminPreviewFilters.month
+              : undefined,
+          startDate: canViewAnyGroup && !record ? '' : previewStartDate,
         }),
       });
       const result = (await response.json()) as {
@@ -2046,8 +2081,12 @@ function ListenerForm({
       setPreviewRows(listeners);
       setPreviewCohort(result.cohort);
       setPreviewOwnerListenerId(previewOwnerId);
-      setSelectedGroup(result.cohort.group);
-      setSelectedYear(result.cohort.year);
+      if (canViewAnyGroup) {
+        setAdminPreviewFilters(result.cohort);
+      } else {
+        setSelectedGroup(result.cohort.group);
+        setSelectedYear(result.cohort.year);
+      }
       onPreviewLoaded({
         listeners,
         group: result.cohort.group,
@@ -2247,14 +2286,65 @@ function ListenerForm({
           </div>
           <div className="form-public-tools">
             <div className="form-lookup-bar">
-              {canSelectAnyGroup ? (
-                <input
-                  type="text"
-                  readOnly
-                  value={detectedGroup}
-                  placeholder="Guruhni formadan tanlang"
-                  aria-label="Tanlangan guruh"
-                />
+              {canViewAnyGroup ? (
+                <div className="admin-group-preview-filters">
+                  <select
+                    aria-label="Ko‘rish uchun guruh"
+                    value={adminPreviewFilters.group}
+                    disabled={lookingUpGroup}
+                    onChange={(event) => {
+                      setAdminPreviewFilters((current) => ({
+                        ...current,
+                        group: event.target.value,
+                      }));
+                      setLookupError('');
+                    }}
+                  >
+                    <option value="">Barcha guruhlar</option>
+                    {previewGroups.map((group) => (
+                      <option key={group}>{group}</option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Ko‘rish uchun yil"
+                    value={adminPreviewFilters.year}
+                    disabled={lookingUpGroup}
+                    onChange={(event) => {
+                      setAdminPreviewFilters((current) => ({
+                        ...current,
+                        year: event.target.value,
+                      }));
+                      setLookupError('');
+                    }}
+                  >
+                    <option value="">Barcha yillar</option>
+                    {previewYears.map((year) => (
+                      <option key={year}>{year}</option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Ko‘rish uchun oy"
+                    value={adminPreviewFilters.month}
+                    disabled={lookingUpGroup}
+                    onChange={(event) => {
+                      setAdminPreviewFilters((current) => ({
+                        ...current,
+                        month: event.target.value,
+                      }));
+                      setLookupError('');
+                    }}
+                  >
+                    <option value="">Barcha oylar</option>
+                    {uzbekMonthNames.map((month, index) => (
+                      <option
+                        key={month}
+                        value={String(index + 1).padStart(2, '0')}
+                      >
+                        {month}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               ) : (
                 <label className="form-lookup-phone">
                   <span>+998</span>
@@ -2279,7 +2369,12 @@ function ListenerForm({
                 {lookingUpGroup ? '… Tekshirilmoqda' : '👁 Ko‘rish'}
               </button>
             </div>
-            {!canSelectAnyGroup && (
+            {canViewAnyGroup ? (
+              <small className="form-lookup-help">
+                Barcha guruhlarni ko‘rishingiz mumkin. Yil va oyni tanlash
+                ixtiyoriy.
+              </small>
+            ) : (
               <small className="form-lookup-help">
                 Ro‘yxatdan o‘tgan 9 xonali telefon raqamingizni kiriting.
               </small>
@@ -2394,6 +2489,15 @@ function ListenerForm({
                               <span>▦</span>
                               {row.workplace || 'Ish joyi kiritilmagan'}
                             </div>
+                            {canViewAnyGroup && (
+                              <div className="listener-member-region">
+                                {formatAdminCohort({
+                                  group: row.group,
+                                  year: row.year,
+                                  month: row.startDate?.slice(5, 7) || '',
+                                })}
+                              </div>
+                            )}
                             <div className="listener-member-region">
                               {row.region}
                               {row.district ? `, ${row.district}` : ''}
