@@ -2461,22 +2461,24 @@ function ListenerForm({
                 ! {lookupError}
               </div>
             )}
-            <a
-              className="form-telegram-invite"
-              href={telegramGroupUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Tinglovchilar Telegram guruhiga qo‘shilish"
-            >
-              <span className="form-telegram-plane" aria-hidden="true">
-                ➤
-              </span>
-              <span className="form-telegram-copy">
-                <strong>Telegram guruhimiz</strong>
-                <small>E&apos;lonlar, savollar va guruh muloqoti</small>
-              </span>
-              <span className="form-telegram-action">Qo‘shilish →</span>
-            </a>
+            {!isAdminForm && (
+              <a
+                className="form-telegram-invite"
+                href={telegramGroupUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Tinglovchilar Telegram guruhiga qo‘shilish"
+              >
+                <span className="form-telegram-plane" aria-hidden="true">
+                  ➤
+                </span>
+                <span className="form-telegram-copy">
+                  <strong>Telegram guruhimiz</strong>
+                  <small>E&apos;lonlar, savollar va guruh muloqoti</small>
+                </span>
+                <span className="form-telegram-action">Qo‘shilish →</span>
+              </a>
+            )}
           </div>
         </header>
         <div className="ting-form-body">

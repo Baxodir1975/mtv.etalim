@@ -213,6 +213,24 @@ const cardsHidden = (app) =>
   app.find((node) => node.props?.className === 'form-entry-sections')[0].props
     .hidden;
 
+test('Telegram joining is shown only on the ordinary listener form', () => {
+  const invite = (app) =>
+    app.find((node) => node.props?.className === 'form-telegram-invite');
+  const ordinary = setup();
+  assert.equal(invite(ordinary).length, 1);
+  assert.equal(invite(ordinary)[0].props.href, 'https://t.me/example');
+  for (const canViewAnyGroup of [false, true]) {
+    const admin = setup({
+      isAdminForm: true,
+      canViewAnyGroup,
+      canSelectAnyGroup: true,
+      canEdit: true,
+    });
+    assert.equal(invite(admin).length, 0);
+    assert.ok(!textOf(admin.tree).includes('Telegram guruhimiz'));
+  }
+});
+
 test('ordinary form has no browse filters; admin form has all three', () => {
   assert.equal(filters(setup()).length, 0);
   assert.equal(
