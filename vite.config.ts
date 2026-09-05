@@ -25,7 +25,10 @@ const localBindingConfig = {
     {
       name: 'REGISTRATION_RATE_LIMITER',
       namespace_id: '1001',
-      simple: { limit: 5, period: 60 as const },
+      // One cohort often registers from the same training-centre Wi-Fi.
+      // Purpose is part of the limiter key, so lookup and registration each
+      // get enough headroom for the full group without disabling protection.
+      simple: { limit: 30, period: 60 as const },
     },
   ],
   routes: [

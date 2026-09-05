@@ -545,9 +545,7 @@ function AdminLogin({
 
 export default function Home() {
   const [activeSection, setActiveSection] = useState<SectionId>('form');
-  const [listenerMenuOpen, setListenerMenuOpen] = useState(true);
   const [accessMenuOpen, setAccessMenuOpen] = useState(false);
-  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [listeners, setListeners] = useState<ListenerRecord[]>(listenerRows);
   const [telegramGroupUrl, setTelegramGroupUrl] = useState(
@@ -587,7 +585,9 @@ export default function Home() {
       if (
         isAdminPath ||
         requestedSection === 'form' ||
-        requestedSection === 'terms'
+        requestedSection === 'terms' ||
+        requestedSection === 'listeners' ||
+        requestedSection === 'sources'
       ) {
         setActiveSection(requestedSection);
       } else {
@@ -731,11 +731,15 @@ export default function Home() {
       roles: 'Rollar va ruxsatlar:Ko‘rish',
     };
     const permission = permissionBySection[section];
+    const publicSection =
+      section === 'form' ||
+      section === 'terms' ||
+      section === 'listeners' ||
+      section === 'sources';
     if (
-      section !== 'terms' &&
+      !publicSection &&
       permission &&
-      (!adminViewer || !adminViewer.permissions.includes(permission)) &&
-      section !== 'form'
+      (!adminViewer || !adminViewer.permissions.includes(permission))
     ) {
       setServerError('Бу бўлимни очиш учун рухсат йўқ.');
       return;
@@ -895,32 +899,15 @@ export default function Home() {
           </div>
         </div>
         <nav className="side-nav" aria-label="Bo‘limlar">
-          {can('Tinglovchilar:Ko‘rish') && (
-            <div className="staff-nav listener-nav">
-              <button
-                className={
-                  listenerMenuOpen || activeSection === 'listeners'
-                    ? 'nav-item active'
-                    : 'nav-item'
-                }
-                onClick={() => setListenerMenuOpen((current) => !current)}
-                aria-expanded={listenerMenuOpen}
-              >
-                <span className="nav-dot" aria-hidden="true" />
-                TINGLOVCHILAR<b>{listenerMenuOpen ? '−' : '+'}</b>
-              </button>
-              {listenerMenuOpen && (
-                <div className="staff-subnav">
-                  <button
-                    className={activeSection === 'listeners' ? 'selected' : ''}
-                    onClick={() => openSection('listeners')}
-                  >
-                    Tinglovchilar
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+          <button
+            className={
+              activeSection === 'listeners' ? 'nav-item active' : 'nav-item'
+            }
+            onClick={() => openSection('listeners')}
+          >
+            <span className="nav-dot" aria-hidden="true" />
+            TINGLOVCHILAR
+          </button>
           <button
             className={
               activeSection === 'form' ? 'nav-item active' : 'nav-item'
@@ -965,41 +952,15 @@ export default function Home() {
               )}
             </div>
           )}
-          {can('Manbalar:Ko‘rish') && (
-            <div className="staff-nav source-nav">
-              <button
-                className={
-                  sourceMenuOpen || activeSection === 'sources'
-                    ? 'nav-item active'
-                    : 'nav-item'
-                }
-                onClick={() => setSourceMenuOpen((current) => !current)}
-                aria-expanded={sourceMenuOpen}
-              >
-                <span className="nav-dot" aria-hidden="true" />
-                MANBALAR<b>{sourceMenuOpen ? '−' : '+'}</b>
-              </button>
-              {sourceMenuOpen && (
-                <div className="staff-subnav source-subnav">
-                  <button
-                    className={activeSection === 'sources' ? 'selected' : ''}
-                    onClick={() => openSection('sources')}
-                  >
-                    Tingmanba
-                  </button>
-                  <button onClick={() => openSection('sources')}>
-                    Hudud, tuman-shahar
-                  </button>
-                  <button onClick={() => openSection('sources')}>
-                    Kategoriya, guruh
-                  </button>
-                  <button onClick={() => openSection('sources')}>
-                    Vazirlik va idoralar
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+          <button
+            className={
+              activeSection === 'sources' ? 'nav-item active' : 'nav-item'
+            }
+            onClick={() => openSection('sources')}
+          >
+            <span className="nav-dot" aria-hidden="true" />
+            MANBALAR
+          </button>
         </nav>
         <div className="profile-mini">
           <div className="avatar">{profileInitials}</div>
@@ -1081,13 +1042,14 @@ export default function Home() {
                 : `Ma’lumotlar bazasi: ${serverError}`}
             </div>
           )}
-          {activeSection === 'listeners' && can('Tinglovchilar:Ko‘rish') && (
+          {activeSection === 'listeners' && (
             <ListenersPanel
               rows={listeners}
               groups={listenerSources.groups}
               canCreate={can('Tinglovchilar:Kiritish')}
               canEdit={can('Tinglovchilar:Tahrirlash')}
               canDelete={can('Tinglovchilar:O‘chirish')}
+              canExport={can('Tinglovchilar:Ko‘rish')}
               onOpenForm={() => {
                 setAdminEditingListener(null);
                 openSection('form');
@@ -1129,6 +1091,20 @@ export default function Home() {
               availableGroups={listenerSources.groups}
               districtOptions={listenerSources.districtsByRegion}
               initialEditingRecord={adminEditingListener}
+              onPreviewLoaded={({
+                listeners: previewListeners,
+                group,
+                ownerListenerId: previewOwnerId,
+              }) => {
+                if (!canSelectAnyGroup) {
+                  setListeners(previewListeners);
+                  if (previewOwnerId) {
+                    setDeviceGroup(group);
+                    setDeviceListenerId(previewOwnerId);
+                    setDeviceBindingVerified(true);
+                  }
+                }
+              }}
               onCancel={() => {
                 setAdminEditingListener(null);
                 openSection('listeners');
@@ -1175,7 +1151,7 @@ export default function Home() {
           {activeSection === 'terms' && (
             <TermsPanel onOpenForm={() => openSection('form')} />
           )}
-          {activeSection === 'sources' && can('Manbalar:Ko‘rish') && (
+          {activeSection === 'sources' && (
             <SourcesPanel
               sources={listenerSources}
               canEdit={can('Manbalar:Tahrirlash')}
@@ -1213,6 +1189,7 @@ function ListenersPanel({
   canCreate,
   canEdit,
   canDelete,
+  canExport,
   onOpenForm,
   onEdit,
   onDelete,
@@ -1225,6 +1202,7 @@ function ListenersPanel({
   canCreate: boolean;
   canEdit: boolean;
   canDelete: boolean;
+  canExport: boolean;
   onOpenForm: () => void;
   onEdit: (listener: ListenerRecord) => void;
   onDelete: (listenerId: string) => Promise<void>;
@@ -1579,15 +1557,17 @@ function ListenersPanel({
               <span>KIRITISH</span>
             </button>
           )}
-          <button
-            className="listener-word-export"
-            type="button"
-            disabled={!filteredRows.length}
-            onClick={exportToWord}
-          >
-            <b>W</b>
-            <span>WORD</span>
-          </button>
+          {canExport && (
+            <button
+              className="listener-word-export"
+              type="button"
+              disabled={!filteredRows.length}
+              onClick={exportToWord}
+            >
+              <b>W</b>
+              <span>WORD</span>
+            </button>
+          )}
           <button
             className="listener-filter-reset"
             type="button"
@@ -1898,6 +1878,7 @@ function ListenerForm({
   availableGroups,
   districtOptions,
   initialEditingRecord,
+  onPreviewLoaded,
   onSave,
   onCancel,
 }: {
@@ -1910,6 +1891,11 @@ function ListenerForm({
   availableGroups: string[];
   districtOptions: Record<string, string[]>;
   initialEditingRecord: ListenerRecord | null;
+  onPreviewLoaded: (preview: {
+    listeners: ListenerRecord[];
+    group: string;
+    ownerListenerId: string;
+  }) => void;
   onSave: (
     listener: ListenerDraft,
     files: ListenerUploads,
@@ -1920,6 +1906,7 @@ function ListenerForm({
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [lookupError, setLookupError] = useState('');
   const [selectedGroup, setSelectedGroup] = useState(
     initialEditingRecord?.group || '',
   );
@@ -2003,6 +1990,26 @@ function ListenerForm({
     if (ownerListenerId) setPreviewOwnerListenerId(ownerListenerId);
   }, [ownerListenerId]);
 
+  useEffect(() => {
+    if (!deviceBindingVerified || !ownerListenerId) return;
+    const owner = rows.find((row) => row.id === ownerListenerId);
+    const digits = owner?.phone.replace(/\D/g, '').slice(-9) || '';
+    if (digits.length === 9) setPhoneDigits(digits);
+  }, [deviceBindingVerified, ownerListenerId, rows]);
+
+  function updatePhoneValue(input: HTMLInputElement) {
+    const digits = input.value.replace(/\D/g, '').slice(0, 9);
+    if (input.value !== digits) input.value = digits;
+    setPhoneDigits(digits);
+    setGroupPreviewOpen(false);
+    setLookupError('');
+
+    if (input.name !== 'phone') {
+      const mainPhone = input.form?.elements.namedItem('phone');
+      if (mainPhone instanceof HTMLInputElement) mainPhone.value = digits;
+    }
+  }
+
   async function loadGroupPreview(record?: ListenerRecord) {
     const previewGroup = record?.group || selectedGroup || lockedGroup;
     const previewStartDate = record?.startDate || selectedStartDate;
@@ -2030,19 +2037,29 @@ function ListenerForm({
       };
       if (!response.ok) throw new Error(result.error || 'Guruh aniqlanmadi.');
       if (!result.found || !result.cohort) {
-        throw new Error('Ushbu qurilmaga biriktirilgan guruh topilmadi.');
+        throw new Error(
+          'Bu telefon raqami bo‘yicha ro‘yxatdan o‘tgan tinglovchi topilmadi.',
+        );
       }
-      setPreviewRows(Array.isArray(result.listeners) ? result.listeners : []);
+      const listeners = Array.isArray(result.listeners) ? result.listeners : [];
+      const previewOwnerId = result.ownerListenerId || record?.id || '';
+      setPreviewRows(listeners);
       setPreviewCohort(result.cohort);
-      setPreviewOwnerListenerId(result.ownerListenerId || record?.id || '');
+      setPreviewOwnerListenerId(previewOwnerId);
       setSelectedGroup(result.cohort.group);
       setSelectedYear(result.cohort.year);
+      onPreviewLoaded({
+        listeners,
+        group: result.cohort.group,
+        ownerListenerId: previewOwnerId,
+      });
       setError('');
+      setLookupError('');
       return true;
     } catch (lookupError) {
       setPreviewRows([]);
       setPreviewCohort(null);
-      setError(
+      setLookupError(
         lookupError instanceof Error
           ? lookupError.message
           : 'Guruhni aniqlab bo‘lmadi.',
@@ -2074,6 +2091,7 @@ function ListenerForm({
     setGroupPreviewOpen(false);
     setSubmitted(false);
     setError('');
+    setLookupError('');
     window.requestAnimationFrame(() =>
       document
         .querySelector('.ting-form-body')
@@ -2093,6 +2111,7 @@ function ListenerForm({
     setPhotoPreview('');
     setSubmitted(false);
     setError('');
+    setLookupError('');
   }
 
   async function submit(event: SyntheticEvent<HTMLFormElement, SubmitEvent>) {
@@ -2159,6 +2178,7 @@ function ListenerForm({
     };
     setSaving(true);
     setError('');
+    setLookupError('');
     try {
       const savedRecord = await onSave(draft, files, editingRecord?.id);
       setEditingRecord(null);
@@ -2227,13 +2247,30 @@ function ListenerForm({
           </div>
           <div className="form-public-tools">
             <div className="form-lookup-bar">
-              <input
-                type="text"
-                readOnly
-                value={detectedGroup}
-                placeholder="Guruh: avtomatik to‘ldiriladi"
-                aria-label="Telefon yoki tanlov bo‘yicha aniqlangan guruh"
-              />
+              {canSelectAnyGroup ? (
+                <input
+                  type="text"
+                  readOnly
+                  value={detectedGroup}
+                  placeholder="Guruhni formadan tanlang"
+                  aria-label="Tanlangan guruh"
+                />
+              ) : (
+                <label className="form-lookup-phone">
+                  <span>+998</span>
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel-national"
+                    maxLength={9}
+                    pattern="[0-9]{9}"
+                    value={phoneDigits}
+                    placeholder="XX XXX XX XX"
+                    aria-label="Ro‘yxatdan o‘tgan telefon raqami"
+                    onInput={(event) => updatePhoneValue(event.currentTarget)}
+                  />
+                </label>
+              )}
               <button
                 type="button"
                 disabled={lookingUpGroup}
@@ -2242,6 +2279,16 @@ function ListenerForm({
                 {lookingUpGroup ? '… Tekshirilmoqda' : '👁 Ko‘rish'}
               </button>
             </div>
+            {!canSelectAnyGroup && (
+              <small className="form-lookup-help">
+                Ro‘yxatdan o‘tgan 9 xonali telefon raqamingizni kiriting.
+              </small>
+            )}
+            {lookupError && (
+              <div className="form-lookup-error" role="alert">
+                ! {lookupError}
+              </div>
+            )}
             <a
               className="form-telegram-invite"
               href={telegramGroupUrl}
@@ -2422,352 +2469,335 @@ function ListenerForm({
               )}
             </section>
           )}
-          {!cardsOnly && (
-            <>
-              <section className="ting-form-section">
-                <div className="ting-section-title">
-                  <span>01</span>
-                  <div>
-                    <b>O‘quv oqimi</b>
-                  </div>
+          <div className="form-entry-sections" hidden={cardsOnly}>
+            <section className="ting-form-section">
+              <div className="ting-section-title">
+                <span>01</span>
+                <div>
+                  <b>O‘quv oqimi</b>
                 </div>
-                <div className="ting-form-grid">
-                  <label>
-                    <span>Malaka oshirish boshlangan sana</span>
-                    <input
-                      name="startDate"
-                      type="date"
-                      required
-                      defaultValue={selectedStartDate}
-                      onInput={(event) => {
-                        const value = event.currentTarget.value;
-                        setSelectedStartDate(value);
-                        if (value) setSelectedYear(value.slice(0, 4));
-                        setGroupPreviewOpen(false);
-                      }}
-                    />
-                  </label>
-                  <label>
-                    <span>Yil</span>
-                    <input
-                      name="year"
-                      value={selectedYear}
-                      readOnly
-                      maxLength={4}
-                    />
-                  </label>
-                  <label>
-                    <span>Kategoriya *</span>
-                    <select
-                      name="category"
-                      required
-                      defaultValue={
-                        editingRecord?.category || 'Nomzod direktor'
-                      }
-                    >
-                      <option>Nomzod direktor</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>Guruh *</span>
-                    {groupIsLocked && (
-                      <input type="hidden" name="group" value={selectedGroup} />
-                    )}
-                    <select
-                      name={groupIsLocked ? undefined : 'group'}
-                      required
-                      value={selectedGroup}
-                      disabled={groupIsLocked}
-                      onChange={(event) => {
-                        setSelectedGroup(event.target.value);
-                        setGroupPreviewOpen(false);
-                      }}
-                    >
-                      <option value="">Tanlang</option>
-                      {availableGroups.map((item) => (
-                        <option key={item}>{item}</option>
-                      ))}
-                    </select>
-                    {!canSelectAnyGroup && lockedGroup && !editingRecord && (
-                      <small className="phone-group-found">
-                        🔒 Bu qurilma uchun guruh birinchi ro‘yxatdan o‘tishdan
-                        keyin biriktirilgan.
-                      </small>
-                    )}
-                  </label>
-                </div>
-              </section>
-              <section className="ting-form-section ting-origin-section">
-                <div className="ting-section-title">
-                  <span>02</span>
-                  <div>
-                    <b>Ish joyi va hudud</b>
-                  </div>
-                </div>
-                <div className="ting-form-grid">
-                  <label>
-                    <span>Hudud *</span>
-                    <select
-                      name="region"
-                      required
-                      value={selectedRegion}
-                      onChange={(event) => {
-                        setSelectedRegion(event.target.value);
-                        setSelectedDistrict('');
-                      }}
-                    >
-                      <option value="">Tanlang</option>
-                      {Object.keys(districtOptions).map((region) => (
-                        <option key={region}>{region}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    <span>Tuman-shahar *</span>
-                    <select
-                      name="district"
-                      required
-                      disabled={!selectedRegion}
-                      value={selectedDistrict}
-                      onChange={(event) =>
-                        setSelectedDistrict(event.target.value)
-                      }
-                    >
-                      <option value="">
-                        {selectedRegion ? 'Tanlang' : 'Avval hududni tanlang'}
-                      </option>
-                      {(districtOptions[selectedRegion] || []).map(
-                        (district) => (
-                          <option key={district}>{district}</option>
-                        ),
-                      )}
-                    </select>
-                  </label>
-                  <label className="wide workplace-field">
-                    <span>Ish joyi (MTM) *</span>
-                    <input
-                      name="workplace"
-                      required
-                      defaultValue={editingRecord?.workplace || ''}
-                      placeholder="MTM yoki tashkilot nomini qo‘lda kiriting"
-                    />
-                  </label>
-                  <label className="wide">
-                    <span>Lavozim</span>
-                    <input
-                      name="position"
-                      defaultValue={
-                        editingRecord?.position === '—'
-                          ? ''
-                          : editingRecord?.position || ''
-                      }
-                      placeholder="Lavozimni qo‘lda kiriting"
-                    />
-                  </label>
-                </div>
-              </section>
-              <section className="ting-form-section">
-                <div className="ting-section-title">
-                  <span>03</span>
-                  <div>
-                    <b>Shaxsiy ma’lumotlar</b>
-                  </div>
-                </div>
-                <div className="ting-form-grid">
-                  <label>
-                    <span>Familiya *</span>
-                    <input
-                      name="surname"
-                      required
-                      defaultValue={editingRecord?.surname || ''}
-                    />
-                  </label>
-                  <label>
-                    <span>Ism *</span>
-                    <input
-                      name="firstName"
-                      required
-                      defaultValue={editingRecord?.firstName || ''}
-                    />
-                  </label>
-                  <label>
-                    <span>Otasining ismi</span>
-                    <input
-                      name="patronymic"
-                      defaultValue={editingRecord?.patronymic || ''}
-                    />
-                  </label>
-                  <label>
-                    <span>Tug‘ilgan sana</span>
-                    <input
-                      name="birthDate"
-                      type="date"
-                      max={new Date().toISOString().slice(0, 10)}
-                      defaultValue={editingRecord?.birthDate || ''}
-                    />
-                  </label>
-                  <label>
-                    <span>Telefon *</span>
-                    <div className="ting-phone">
-                      <i>+998</i>
-                      <input
-                        name="phone"
-                        required
-                        inputMode="numeric"
-                        autoComplete="tel-national"
-                        maxLength={9}
-                        pattern="[0-9]{9}"
-                        placeholder="XX XXX XX XX"
-                        defaultValue={phoneDigits}
-                        onInput={(event) => {
-                          const digits = event.currentTarget.value
-                            .replace(/\D/g, '')
-                            .slice(0, 9);
-                          if (event.currentTarget.value !== digits) {
-                            event.currentTarget.value = digits;
-                          }
-                          setPhoneDigits(digits);
-                          setGroupPreviewOpen(false);
-                        }}
-                      />
-                    </div>
-                    {matchedListener && (
-                      <small className="phone-group-found">
-                        ✓ {matchedListener.group} aniqlandi
-                      </small>
-                    )}
-                  </label>
-                  <label className="wide">
-                    <span>Izoh</span>
-                    <textarea
-                      name="note"
-                      defaultValue={editingRecord?.note || ''}
-                    />
-                  </label>
-                </div>
-              </section>
-              <section className="ting-form-section">
-                <div className="ting-section-title">
-                  <span>04</span>
-                  <div>
-                    <b>Hujjatlar</b>
-                  </div>
-                </div>
-                <div className="ting-files">
-                  <label
-                    className={`ting-file ting-photo-upload ${photoPreview ? 'has-file' : ''}`}
+              </div>
+              <div className="ting-form-grid">
+                <label>
+                  <span>Malaka oshirish boshlangan sana</span>
+                  <input
+                    name="startDate"
+                    type="date"
+                    required
+                    defaultValue={selectedStartDate}
+                    onInput={(event) => {
+                      const value = event.currentTarget.value;
+                      setSelectedStartDate(value);
+                      if (value) setSelectedYear(value.slice(0, 4));
+                      setGroupPreviewOpen(false);
+                    }}
+                  />
+                </label>
+                <label>
+                  <span>Yil</span>
+                  <input
+                    name="year"
+                    value={selectedYear}
+                    readOnly
+                    maxLength={4}
+                  />
+                </label>
+                <label>
+                  <span>Kategoriya *</span>
+                  <select
+                    name="category"
+                    required
+                    defaultValue={editingRecord?.category || 'Nomzod direktor'}
                   >
-                    <input
-                      name="photo"
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      required={!editingRecord?.photo}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (!file) {
-                          setPhotoPreview(editingRecord?.photo || '');
-                          return;
-                        }
-                        void fileDataUrl(file).then(setPhotoPreview);
-                      }}
-                    />
-                    {photoPreview ? (
-                      <img
-                        className="ting-photo-preview"
-                        src={photoPreview}
-                        alt="Tanlangan 3×4 rasm"
-                      />
-                    ) : (
-                      <span>＋</span>
-                    )}
-                    <b>{photoPreview ? '3×4 rasm tanlandi' : '3×4 rasm *'}</b>
-                    <small>
-                      {photoPreview
-                        ? 'Almashtirish uchun rasmni bosing'
-                        : 'JPG, PNG yoki WEBP'}
+                    <option>Nomzod direktor</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Guruh *</span>
+                  {groupIsLocked && (
+                    <input type="hidden" name="group" value={selectedGroup} />
+                  )}
+                  <select
+                    name={groupIsLocked ? undefined : 'group'}
+                    required
+                    value={selectedGroup}
+                    disabled={groupIsLocked}
+                    onChange={(event) => {
+                      setSelectedGroup(event.target.value);
+                      setGroupPreviewOpen(false);
+                    }}
+                  >
+                    <option value="">Tanlang</option>
+                    {availableGroups.map((item) => (
+                      <option key={item}>{item}</option>
+                    ))}
+                  </select>
+                  {!canSelectAnyGroup && lockedGroup && !editingRecord && (
+                    <small className="phone-group-found">
+                      🔒 Bu qurilma uchun guruh birinchi ro‘yxatdan o‘tishdan
+                      keyin biriktirilgan.
                     </small>
-                  </label>
-                  <label
-                    className={`ting-file ${editingRecord?.orderFile ? 'has-file' : ''}`}
+                  )}
+                </label>
+              </div>
+            </section>
+            <section className="ting-form-section ting-origin-section">
+              <div className="ting-section-title">
+                <span>02</span>
+                <div>
+                  <b>Ish joyi va hudud</b>
+                </div>
+              </div>
+              <div className="ting-form-grid">
+                <label>
+                  <span>Hudud *</span>
+                  <select
+                    name="region"
+                    required
+                    value={selectedRegion}
+                    onChange={(event) => {
+                      setSelectedRegion(event.target.value);
+                      setSelectedDistrict('');
+                    }}
                   >
-                    <input
-                      name="order"
-                      type="file"
-                      accept="application/pdf,image/jpeg,image/png,image/webp"
-                    />
-                    <span>PDF</span>
-                    <b>
-                      {editingRecord?.orderFile
-                        ? 'Buyruq yuklangan ✓'
-                        : 'Buyruq (PDF yoki rasm)'}
-                    </b>
-                  </label>
-                  <label
-                    className={`ting-file compact ${editingRecord?.passportFront ? 'has-file' : ''}`}
+                    <option value="">Tanlang</option>
+                    {Object.keys(districtOptions).map((region) => (
+                      <option key={region}>{region}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Tuman-shahar *</span>
+                  <select
+                    name="district"
+                    required
+                    disabled={!selectedRegion}
+                    value={selectedDistrict}
+                    onChange={(event) =>
+                      setSelectedDistrict(event.target.value)
+                    }
                   >
+                    <option value="">
+                      {selectedRegion ? 'Tanlang' : 'Avval hududni tanlang'}
+                    </option>
+                    {(districtOptions[selectedRegion] || []).map((district) => (
+                      <option key={district}>{district}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="wide workplace-field">
+                  <span>Ish joyi (MTM) *</span>
+                  <input
+                    name="workplace"
+                    required
+                    defaultValue={editingRecord?.workplace || ''}
+                    placeholder="MTM yoki tashkilot nomini qo‘lda kiriting"
+                  />
+                </label>
+                <label className="wide">
+                  <span>Lavozim</span>
+                  <input
+                    name="position"
+                    defaultValue={
+                      editingRecord?.position === '—'
+                        ? ''
+                        : editingRecord?.position || ''
+                    }
+                    placeholder="Lavozimni qo‘lda kiriting"
+                  />
+                </label>
+              </div>
+            </section>
+            <section className="ting-form-section">
+              <div className="ting-section-title">
+                <span>03</span>
+                <div>
+                  <b>Shaxsiy ma’lumotlar</b>
+                </div>
+              </div>
+              <div className="ting-form-grid">
+                <label>
+                  <span>Familiya *</span>
+                  <input
+                    name="surname"
+                    required
+                    defaultValue={editingRecord?.surname || ''}
+                  />
+                </label>
+                <label>
+                  <span>Ism *</span>
+                  <input
+                    name="firstName"
+                    required
+                    defaultValue={editingRecord?.firstName || ''}
+                  />
+                </label>
+                <label>
+                  <span>Otasining ismi</span>
+                  <input
+                    name="patronymic"
+                    defaultValue={editingRecord?.patronymic || ''}
+                  />
+                </label>
+                <label>
+                  <span>Tug‘ilgan sana</span>
+                  <input
+                    name="birthDate"
+                    type="date"
+                    max={new Date().toISOString().slice(0, 10)}
+                    defaultValue={editingRecord?.birthDate || ''}
+                  />
+                </label>
+                <label>
+                  <span>Telefon *</span>
+                  <div className="ting-phone">
+                    <i>+998</i>
                     <input
-                      name="passportFront"
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
+                      name="phone"
+                      required
+                      inputMode="numeric"
+                      autoComplete="tel-national"
+                      maxLength={9}
+                      pattern="[0-9]{9}"
+                      placeholder="XX XXX XX XX"
+                      defaultValue={phoneDigits}
+                      onInput={(event) => updatePhoneValue(event.currentTarget)}
                     />
+                  </div>
+                  {matchedListener && (
+                    <small className="phone-group-found">
+                      ✓ {matchedListener.group} aniqlandi
+                    </small>
+                  )}
+                </label>
+                <label className="wide">
+                  <span>Izoh</span>
+                  <textarea
+                    name="note"
+                    defaultValue={editingRecord?.note || ''}
+                  />
+                </label>
+              </div>
+            </section>
+            <section className="ting-form-section">
+              <div className="ting-section-title">
+                <span>04</span>
+                <div>
+                  <b>Hujjatlar</b>
+                </div>
+              </div>
+              <div className="ting-files">
+                <label
+                  className={`ting-file ting-photo-upload ${photoPreview ? 'has-file' : ''}`}
+                >
+                  <input
+                    name="photo"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    required={!editingRecord?.photo}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) {
+                        setPhotoPreview(editingRecord?.photo || '');
+                        return;
+                      }
+                      void fileDataUrl(file).then(setPhotoPreview);
+                    }}
+                  />
+                  {photoPreview ? (
+                    <img
+                      className="ting-photo-preview"
+                      src={photoPreview}
+                      alt="Tanlangan 3×4 rasm"
+                    />
+                  ) : (
                     <span>＋</span>
-                    <b>
-                      {editingRecord?.passportFront
-                        ? 'Pasport old tomoni ✓'
-                        : 'Pasport old tomoni'}
-                    </b>
-                  </label>
-                  <label
-                    className={`ting-file compact ${editingRecord?.passportBack ? 'has-file' : ''}`}
-                  >
-                    <input
-                      name="passportBack"
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                    />
-                    <span>＋</span>
-                    <b>
-                      {editingRecord?.passportBack
-                        ? 'Pasport orqa tomoni ✓'
-                        : 'Pasport orqa tomoni'}
-                    </b>
-                  </label>
-                </div>
-              </section>
-              {error && (
-                <div className="ting-state error">
-                  <b>!</b>
-                  <span>{error}</span>
-                </div>
-              )}
-              {submitted && (
-                <div className="ting-state">
-                  <span>
-                    ✓ Ma’lumotlar saqlandi. Guruh kartochkalari yangilandi.
-                  </span>
-                </div>
-              )}
-            </>
-          )}
+                  )}
+                  <b>{photoPreview ? '3×4 rasm tanlandi' : '3×4 rasm *'}</b>
+                  <small>
+                    {photoPreview
+                      ? 'Almashtirish uchun rasmni bosing'
+                      : 'JPG, PNG yoki WEBP'}
+                  </small>
+                </label>
+                <label
+                  className={`ting-file ${editingRecord?.orderFile ? 'has-file' : ''}`}
+                >
+                  <input
+                    name="order"
+                    type="file"
+                    accept="application/pdf,image/jpeg,image/png,image/webp"
+                  />
+                  <span>PDF</span>
+                  <b>
+                    {editingRecord?.orderFile
+                      ? 'Buyruq yuklangan ✓'
+                      : 'Buyruq (PDF yoki rasm)'}
+                  </b>
+                </label>
+                <label
+                  className={`ting-file compact ${editingRecord?.passportFront ? 'has-file' : ''}`}
+                >
+                  <input
+                    name="passportFront"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                  />
+                  <span>＋</span>
+                  <b>
+                    {editingRecord?.passportFront
+                      ? 'Pasport old tomoni ✓'
+                      : 'Pasport old tomoni'}
+                  </b>
+                </label>
+                <label
+                  className={`ting-file compact ${editingRecord?.passportBack ? 'has-file' : ''}`}
+                >
+                  <input
+                    name="passportBack"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                  />
+                  <span>＋</span>
+                  <b>
+                    {editingRecord?.passportBack
+                      ? 'Pasport orqa tomoni ✓'
+                      : 'Pasport orqa tomoni'}
+                  </b>
+                </label>
+              </div>
+            </section>
+            {error && (
+              <div className="ting-state error">
+                <b>!</b>
+                <span>{error}</span>
+              </div>
+            )}
+            {submitted && (
+              <div className="ting-state">
+                <span>
+                  ✓ Ma’lumotlar saqlandi. Guruh kartochkalari yangilandi.
+                </span>
+              </div>
+            )}
+          </div>
         </div>
-        {!cardsOnly && (
-          <footer>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={editingRecord ? cancelEditing : onCancel}
-            >
-              {editingRecord ? 'TAHRIRNI BEKOR QILISH' : 'Bekor qilish'}
-            </button>
-            <button className="primary" disabled={saving}>
-              {saving
-                ? 'SAQLANMOQDA…'
-                : editingRecord
-                  ? 'O‘ZGARISHLARNI SAQLASH'
-                  : 'RO‘YXATGA KIRITISH'}
-            </button>
-          </footer>
-        )}
+        <footer hidden={cardsOnly}>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={editingRecord ? cancelEditing : onCancel}
+          >
+            {editingRecord ? 'TAHRIRNI BEKOR QILISH' : 'Bekor qilish'}
+          </button>
+          <button className="primary" disabled={saving}>
+            {saving
+              ? 'SAQLANMOQDA…'
+              : editingRecord
+                ? 'O‘ZGARISHLARNI SAQLASH'
+                : 'RO‘YXATGA KIRITISH'}
+          </button>
+        </footer>
       </form>
       {zoomedRecord?.photo && (
         <dialog

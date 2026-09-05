@@ -1,4 +1,8 @@
-import { authenticatedAdmin, deviceBinding } from '@/lib/auth';
+import {
+  authenticatedAdmin,
+  deviceBinding,
+  groupViewBinding,
+} from '@/lib/auth';
 import {
   defaultListenerSources,
   getDatabase,
@@ -43,9 +47,10 @@ function telegramUrl(value: unknown) {
 
 export async function GET(request: Request) {
   try {
-    const [member, device] = await Promise.all([
+    const [member, device, groupView] = await Promise.all([
       authenticatedAdmin(request),
       deviceBinding(request),
+      groupViewBinding(request),
     ]);
     const sql = getDatabase();
     const canViewAll = hasPermission(member, 'Tinglovchilar:Ko‘rish');
@@ -123,6 +128,22 @@ export async function GET(request: Request) {
         );
         scope = { kind: 'device', group, year, month, canViewAll: false };
       }
+    } else if (groupView) {
+      const group = groupView.group;
+      const year = groupView.year;
+      const month = groupView.month;
+      listenerRows = await sql.query(
+        `SELECT ${listenerColumns}
+         FROM listeners
+         WHERE deleted_at IS NULL
+           AND group_name = $1
+           AND training_year = $2
+           AND COALESCE(TO_CHAR(start_date, 'MM'), '') = $3
+         ORDER BY created_at ASC
+         LIMIT 250`,
+        [group, year, month],
+      );
+      scope = { kind: 'group', group, year, month, canViewAll: false };
     }
 
     const settings = settingRows as Record<string, unknown>[];

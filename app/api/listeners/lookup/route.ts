@@ -1,4 +1,4 @@
-import { authenticatedAdmin, deviceBinding } from '@/lib/auth';
+import { authenticatedAdmin, deviceBinding, groupViewCookie } from '@/lib/auth';
 import {
   getDatabase,
   hasPermission,
@@ -56,29 +56,25 @@ export async function POST(request: Request) {
       deviceBinding(request),
     ]);
     const canViewAll = hasPermission(member, 'Tinglovchilar:Ko‘rish');
-    if (!canViewAll && !device) {
-      return publicError(
-        'Guruh kartochkalari faqat shu qurilmadan ro‘yxatdan o‘tgandan keyin ochiladi.',
-        403,
-      );
-    }
     const sql = getDatabase();
     const phone = phoneDigits(input.phone);
+    if (!canViewAll && !device && !/^\d{9}$/.test(phone)) {
+      return publicError(
+        'Guruhni ko‘rish uchun ro‘yxatdan o‘tgan telefon raqamini 9 ta raqamda kiriting.',
+        400,
+      );
+    }
     let group = safeText(input.group, 100);
     let year = safeText(input.year, 4);
     let month = safeText(input.month, 2);
+    let ownerListenerId = device?.listenerId || '';
+    let openedByPhone = false;
     const startDate = safeText(input.startDate, 10);
     if (!month && /^\d{4}-(\d{2})-\d{2}$/.test(startDate)) {
       month = startDate.slice(5, 7);
     }
 
-    if (!canViewAll && (device || phone)) {
-      if (!device && !/^\d{9}$/.test(phone)) {
-        return publicError(
-          'Guruhni ko‘rish uchun ro‘yxatdan o‘tgan telefon raqamini kiriting.',
-          400,
-        );
-      }
+    if (!canViewAll) {
       const sourceRows = device
         ? await sql`
             SELECT id, group_name, training_year,
@@ -96,6 +92,8 @@ export async function POST(request: Request) {
           `;
       const source = sourceRows[0];
       if (!source) return jsonResponse({ found: false, listeners: [] });
+      if (device) ownerListenerId = String(source.id || '');
+      openedByPhone = !device;
       group = String(source.group_name || '');
       year = String(source.training_year || '');
       month = String(source.training_month || '');
@@ -122,7 +120,7 @@ export async function POST(request: Request) {
     `;
 
     const listeners = (rows as ListenerDbRow[]).map((row) =>
-      canViewAll || device?.listenerId === row.id
+      canViewAll || ownerListenerId === row.id
         ? listenerFromDb(row)
         : publicListenerFromDb(row),
     );
@@ -131,8 +129,14 @@ export async function POST(request: Request) {
       group,
       cohort: { group, year, month },
       listeners,
-      ownerListenerId: device?.listenerId || '',
+      ownerListenerId,
     });
+    if (openedByPhone) {
+      response.headers.append(
+        'Set-Cookie',
+        await groupViewCookie(group, year, month),
+      );
+    }
     return response;
   } catch (error) {
     logServerError(

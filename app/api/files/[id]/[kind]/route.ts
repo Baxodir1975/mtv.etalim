@@ -1,4 +1,8 @@
-import { authenticatedAdmin, deviceBinding } from '@/lib/auth';
+import {
+  authenticatedAdmin,
+  deviceBinding,
+  groupViewBinding,
+} from '@/lib/auth';
 import {
   getDatabase,
   hasPermission,
@@ -34,13 +38,17 @@ export async function GET(request: Request, context: RouteContext) {
       return publicError('Fayl topilmadi.', 404);
     }
 
-    const [member, device] = await Promise.all([
+    const [member, device, groupView] = await Promise.all([
       authenticatedAdmin(request),
       deviceBinding(request),
+      groupViewBinding(request),
     ]);
     const canViewAll = hasPermission(member, 'Tinglovchilar:Ko‘rish');
     const sql = getDatabase();
     const deviceListenerId = device?.listenerId || '';
+    const viewedGroup = groupView?.group || '';
+    const viewedYear = groupView?.year || '';
+    const viewedMonth = groupView?.month || '';
     const fileRows = await sql`
       SELECT
         f.mime_type,
@@ -67,6 +75,13 @@ export async function GET(request: Request, context: RouteContext) {
             AND owner.training_year = l.training_year
             AND COALESCE(TO_CHAR(owner.start_date, 'MM'), '') =
                 COALESCE(TO_CHAR(l.start_date, 'MM'), '')
+          )
+          OR (
+            ${kind === 'photo'}
+            AND ${Boolean(groupView)}
+            AND l.group_name = ${viewedGroup}
+            AND l.training_year = ${viewedYear}
+            AND COALESCE(TO_CHAR(l.start_date, 'MM'), '') = ${viewedMonth}
           )
         )
       LIMIT 1
